@@ -1,0 +1,119 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.18.4"
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "5ac04392499074b38bdd5be89d8bc2b4",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "15737a5637ed60170bf1dc4503f8551e",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "c108d92088ae997cb5f451f88a40b9e0",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "6ecd9a8e2aac9a38d7a6ddb368099924",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "ae6bb82277f2e5bec91093545f7de716",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"topic-modeling-results-explorer\">Topic Modeling Results Explorer</h1></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "22cf6abcc9c5dd7e0c1882abe2cf18df",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "d50a099e5651aebaf52c0bd49da5e70e",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "e2c50a7d790e25b64fcf34ad3a102a92",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "b6e1dbf24e3d0b474c6f5bcf39199295",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "83b73b17de5f76caf93bf3e32b8890de",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "da2200eb04b61daeace81561fd6d0297",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"topic-distribution-analysis\">Topic Distribution Analysis</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "45b049e1a949315aea142428e84e2f23",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "ea616eb826b23512fd9291a2c305f183",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"temporal-dynamics-all-topics\">Temporal Dynamics - All Topics</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "27e3560e66b2b28c4625467bf3457357",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "65fd6e69e73776537d479e7fd383aa31",
+      "outputs": [],
+      "console": []
+    }
+  ]
+}
