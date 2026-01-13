@@ -27,7 +27,29 @@ mypy src/
 ```
 # Check-worthiness Classifier
 
-## SOTA History - CT24 Checkworthiness Classification
+## LLMs tested directly for Check-worthiness (all have training cutoff dates prior to CheckThat! 2024 Task 1 dataset publishing date)
+
+DEV vs TEST COMPARISON
+qwen-2.5-72b: Dev F1 0.836 → Test F1 0.689 (Δ -0.147)
+mistral-small-24b: Dev F1 0.822 → Test F1 0.677 (Δ -0.145)
+llama-3.1-70b: Dev F1 0.813 → Test F1 0.635 (Δ -0.178)
+llama-3.3-70b: Dev F1 0.798 → Test F1 0.633 (Δ -0.165)
+gpt-4o-mini: Dev F1 0.790 → Test F1 0.607 (Δ -0.183)
+gpt-3.5-turbo: Dev F1 0.780 → Test F1 0.603 (Δ -0.177)
+mixtral-8x7b: Dev F1 0.837 → Test F1 0.585 (Δ -0.252)
+RANKING (by Test F1):
+
+qwen-2.5-72b — 0.689 ✅ Best generalization
+mistral-small-24b — 0.677 ✅
+llama-3.1-70b — 0.635
+llama-3.3-70b — 0.633
+gpt-4o-mini — 0.607
+gpt-3.5-turbo — 0.603
+mixtral-8x7b — 0.585 ❌ Worst generalization
+
+Δ: Difference between ChechThat1 2024 Lab 1 F1 leader model and the obtained F1 with LLM prompting.
+
+## SOTA History - CT24 Check-worthiness Classification
 
 **Session Date:** January 2026
 **Dataset:** CT24 Checkworthy English (ClaimBuster Task)
