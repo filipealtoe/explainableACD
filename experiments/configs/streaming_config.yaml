@@ -1,0 +1,192 @@
+# Streaming Real-Time Claim Detection Configuration
+# ================================================
+#
+# This configuration file controls all hyperparameters for the streaming
+# claim detection pipeline. Adjust these values based on your dataset
+# and computational constraints.
+#
+# Reference: See /Users/sergiopinto/.claude/plans/snug-tickling-melody.md for the full design.
+
+# =============================================================================
+# DATA SETTINGS
+# =============================================================================
+data:
+  file_path: "data/raw/us_elections_tweets.parquet"
+  time_column: "created_at"
+  text_column: "tweet"
+  # Temporal bounds (optional, uses full dataset if not specified)
+  start_date: "2020-10-15"
+  end_date: "2020-11-08"
+
+# =============================================================================
+# STREAMING SIMULATOR
+# =============================================================================
+simulator:
+  window_size: "1h"  # Options: "1h", "6h", "1d"
+  lookback_hours: 168  # 7 days for baseline statistics
+
+# =============================================================================
+# CLAIM GATE (Linguistic Pre-Filter)
+# =============================================================================
+# Filters tweets before expensive processing to reduce noise.
+# Expected pass rate: 50-70%
+claim_gate:
+  enabled: true
+  min_words: 5
+  max_words: 100
+  filter_questions: true
+  filter_reactions: true
+  require_verb: true
+  filter_retweets: true
+
+# =============================================================================
+# EMBEDDER (Sentence Transformers)
+# =============================================================================
+embedder:
+  enabled: true
+  model_name: "all-mpnet-base-v2"  # 768-dim, best quality
+  # Alternative: "all-MiniLM-L6-v2" (384-dim, faster)
+  batch_size: 64
+  device: "mps"  # Options: "cpu", "cuda", "mps"
+  normalize: true
+  cache_embeddings: true
+  show_progress: true
+
+# =============================================================================
+# CLUSTERER (OnlineCosineClustering)
+# =============================================================================
+# Dynamic threshold-based clustering (not fixed K!)
+# Addresses reviewer concern about fixed K=100
+clusterer:
+  algorithm: "online_cosine"
+  similarity_threshold: 0.70  # Lower = more permissive, fewer clusters created
+  min_cluster_size: 1
+  max_clusters: 100000  # Doubled to handle full dataset
+  max_representatives_per_cluster: 5
+  save_state: true
+  state_file: "clusterer_state.npz"
+
+# =============================================================================
+# ANOMALY DETECTOR (Ensemble: Z-score + Kleinberg)
+# =============================================================================
+# Ensemble logic: Flag if EITHER detector triggers (union)
+# - Z-score: catches sudden spikes
+# - Kleinberg: catches sustained bursts
+anomaly:
+  enabled: true
+
+  # Z-score parameters
+  z_threshold: 3.0  # Standard 3-sigma threshold
+  z_window_hours: 168  # 7 days rolling window
+  min_observations: 24  # Need 1 day of data before detecting
+  min_std_count: 2.0  # Minimum std to avoid flat-line false positives
+  min_std_engagement: 5.0
+
+  # Composite score weights (from existing anomaly detection)
+  count_weight: 0.4
+  engagement_weight: 0.6
+
+  # Minimum activity thresholds
+  min_count: 10
+  min_engagement: 50
+
+  # Kleinberg burst detection
+  kleinberg_enabled: true
+  kleinberg_n_states: 3  # 0=normal, 1=elevated, 2=burst
+  kleinberg_gamma: 1.0  # State transition cost (higher = more stable)
+  kleinberg_trigger_state: 2  # State that triggers anomaly
+
+# =============================================================================
+# GROQ (LLM Claim Normalization)
+# =============================================================================
+# Uses Groq API with Llama 3.1 8B for claim synthesis
+# Free tier: 30 requests/minute
+groq:
+  enabled: true
+  model: "llama-3.1-8b-instant"
+  max_tokens: 256
+  temperature: 0.3  # Low temperature for consistent outputs
+  max_tweets_per_cluster: 5
+  rate_limit_rpm: 30  # Conservative to avoid rate limits
+  timeout_seconds: 30.0
+
+# =============================================================================
+# CLAIM REGISTRY (Deduplication)
+# =============================================================================
+# Handles cluster → claim mapping and deduplication
+registry:
+  enabled: true
+  dedup_threshold: 0.85  # Cosine similarity for merging claims
+  max_tweets_for_normalization: 5
+  min_cluster_size: 10  # Only normalize clusters with 10+ tweets
+
+# =============================================================================
+# VIRALITY PREDICTOR (XGBoost)
+# =============================================================================
+# Predicts if a claim will go viral based on early signals
+# Target: reaches 1000+ RTs within 4h of detection
+virality:
+  enabled: true
+  model_path: "model/virality_xgboost.pkl"
+  peek_hours: 6  # Hours after detection to extract features
+  horizon_hours: 168  # 7 days for ground truth labeling
+  virality_threshold: 1000  # RTs to be considered viral
+  virality_window_hours: 4  # Time window for threshold
+  min_tweets_for_prediction: 5
+
+# =============================================================================
+# OUTPUT SETTINGS
+# =============================================================================
+output:
+  output_dir: "data/pipeline_output/streaming"
+  save_every_n_windows: 24  # Checkpoint every 24 hours
+  save_intermediate: false
+
+# =============================================================================
+# MLFLOW TRACKING
+# =============================================================================
+mlflow:
+  enabled: true
+  experiment_name: "streaming_claim_detection"
+  run_name_prefix: "us_elections"
+  tracking_uri: "sqlite:///mlflow.db"
+
+# =============================================================================
+# EVALUATION SETTINGS
+# =============================================================================
+evaluation:
+  # Walk-forward temporal split
+  train_end_date: "2020-11-03"  # Train: Oct 15 - Nov 3
+  test_start_date: "2020-11-04"  # Test: Nov 4 - Nov 8
+  gap_hours: 24  # Gap between train and test to prevent leakage
+
+  # Primary metrics (from review synthesis)
+  primary_metric: "lead_time_median"
+  secondary_metrics:
+    - "lead_time_p25"
+    - "precision_at_20_percent"
+    - "virality_f1"
+    - "virality_auc"
+
+  # Cluster quality metrics
+  cluster_metrics:
+    - "purity"
+    - "bcubed_f1"
+    - "cluster_churn"
+    - "dedup_rate"
+
+# =============================================================================
+# BASELINES TO IMPLEMENT
+# =============================================================================
+# Reference for comparison (see plan for details)
+baselines:
+  - name: "kleinberg_only"
+    description: "Kleinberg burst detection without Z-score"
+  - name: "zscore_only"
+    description: "Z-score without Kleinberg"
+  - name: "velocity_heuristic"
+    description: "Simple velocity > X threshold"
+  - name: "no_user_features"
+    description: "Virality without user authority features"
+  - name: "top_liked_tweet"
+    description: "No LLM, just use top-liked tweet as claim"

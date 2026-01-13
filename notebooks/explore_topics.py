@@ -13,6 +13,7 @@ def _():
     import plotly.express as px
     import plotly.graph_objects as go
     import polars as pl
+
     return Path, go, json, mo, pl, px
 
 
@@ -56,26 +57,17 @@ def _(mo, topic_keywords):
 @app.cell
 def _(mo, pl, topic_keywords, ts_df):
     time_cols = [col for col in ts_df.columns if col != "topic"]
-    topic_totals = ts_df.select([
-        pl.col("topic"),
-        pl.sum_horizontal(time_cols).alias("total_docs")
-    ]).sort("total_docs", descending=True)
+    topic_totals = ts_df.select([pl.col("topic"), pl.sum_horizontal(time_cols).alias("total_docs")]).sort(
+        "total_docs", descending=True
+    )
 
     topic_table_data = []
     for row in topic_totals.iter_rows(named=True):
         topic_id = row["topic"]
         keywords = ", ".join(topic_keywords.get(topic_id, [])[:5])
-        topic_table_data.append({
-            "Topic": topic_id,
-            "Keywords": keywords,
-            "Total Documents": row["total_docs"]
-        })
+        topic_table_data.append({"Topic": topic_id, "Keywords": keywords, "Total Documents": row["total_docs"]})
 
-    mo.ui.table(
-        topic_table_data[:20],
-        label="Top 20 Topics by Document Count",
-        selection=None
-    )
+    mo.ui.table(topic_table_data[:20], label="Top 20 Topics by Document Count", selection=None)
     return time_cols, topic_totals
 
 
@@ -102,22 +94,24 @@ def _(go, pl, selected_topic, time_cols, ts_df):
         values = [topic_data[col][0] if col in topic_data.columns else 0 for col in time_cols]
 
         fig_single = go.Figure()
-        fig_single.add_trace(go.Scatter(
-            x=time_cols,
-            y=values,
-            mode='lines+markers',
-            name=f"Topic {selected_topic}",
-            line=dict(color='#636EFA', width=2),
-            marker=dict(size=4)
-        ))
+        fig_single.add_trace(
+            go.Scatter(
+                x=time_cols,
+                y=values,
+                mode="lines+markers",
+                name=f"Topic {selected_topic}",
+                line=dict(color="#636EFA", width=2),
+                marker=dict(size=4),
+            )
+        )
 
         fig_single.update_layout(
             title=f"Topic {selected_topic} Activity Over Time",
             xaxis_title="Time",
             yaxis_title="Document Count",
-            template='plotly_white',
+            template="plotly_white",
             height=400,
-            hovermode='x'
+            hovermode="x",
         )
 
         fig_single
@@ -141,9 +135,9 @@ def _(px, topic_totals):
         title="Document Distribution Across Topics",
         labels={"topic": "Topic ID", "total_docs": "Total Documents"},
         template="plotly_white",
-        height=500
+        height=500,
     )
-    fig_dist.update_traces(marker_color='#636EFA')
+    fig_dist.update_traces(marker_color="#636EFA")
     fig_dist
     return
 
@@ -177,22 +171,24 @@ def _(go, time_cols, top_k_slider, topic_keywords, topic_totals, ts_df):
             kws = topic_keywords.get(topic, [])[:3]
             label = f"Topic {topic}: {', '.join(kws)}"
 
-            fig_multi.add_trace(go.Scatter(
-                x=time_cols,
-                y=vals,
-                mode='lines',
-                name=label,
-                hovertemplate=f'{label}<br>Time: %{{x}}<br>Count: %{{y}}<extra></extra>'
-            ))
+            fig_multi.add_trace(
+                go.Scatter(
+                    x=time_cols,
+                    y=vals,
+                    mode="lines",
+                    name=label,
+                    hovertemplate=f"{label}<br>Time: %{{x}}<br>Count: %{{y}}<extra></extra>",
+                )
+            )
 
     fig_multi.update_layout(
         title=f"Top {top_k} Topics Over Time",
         xaxis_title="Time",
         yaxis_title="Document Count",
-        template='plotly_white',
+        template="plotly_white",
         height=600,
-        hovermode='x unified',
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+        hovermode="x unified",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01),
     )
 
     fig_multi

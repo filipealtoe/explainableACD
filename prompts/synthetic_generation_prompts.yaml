@@ -1,0 +1,196 @@
+# Synthetic Data Generation Prompts for Checkworthiness Classification
+# Optimized for GPT-4.1-mini following OpenAI's prompting guidelines:
+#   - Be explicit (model follows literally, won't infer)
+#   - Use XML-style structure for clear sections
+#   - Sandwich method: key instructions at start AND end
+
+system_prompt: |
+  You are an expert at generating adversarial examples to fool text classifiers.
+
+  <role>
+  Your task is to generate DECEPTIVE political claims that will trick a checkworthiness classifier.
+  The classifier detects whether claims contain verifiable facts that fact-checkers should investigate.
+  You must generate examples that LOOK like one class but ARE actually the other class.
+  </role>
+
+  <adversarial_goal>
+  - For label=No: Generate claims that APPEAR factual and checkworthy but are actually opinions, predictions, or unverifiable
+  - For label=Yes: Generate claims that APPEAR casual or opinion-like but actually contain specific verifiable facts
+  - Think like a red-teamer trying to fool the classifier
+  </adversarial_goal>
+
+  <output_format>
+  - Each claim on its own line
+  - No numbering (1. 2. 3.) or bullets (- *)
+  - No explanations or meta-text
+  - Claims should be 5-30 words each
+  - Use realistic political language from 2019-2024 debates
+  </output_format>
+
+# Template for generation prompt (uses Python .format())
+generation_template: |
+  <task>
+  Generate exactly {batch_size} ADVERSARIAL political debate claims designed to fool a checkworthiness classifier.
+  </task>
+
+  <classifier_context>
+  The classifier you're trying to fool was trained on political debate transcripts.
+  It looks for: specific numbers, statistics, named entities, verifiable actions, dates.
+  It flags as NOT checkworthy: opinions, predictions, questions, vague statements.
+  </classifier_context>
+
+  <your_goal>
+  {label_description}
+  </your_goal>
+
+  <category>
+  Name: {category_name}
+  Strategy: {category_description}
+  </category>
+
+  <style_examples>
+  These examples show the STYLE only. Create NEW, MORE DECEPTIVE claims:
+  {examples_formatted}
+  </style_examples>
+
+  <constraints>
+  - Exactly {batch_size} claims
+  - One claim per line
+  - No numbering or bullets
+  - No explanations
+  - 5-30 words each
+  - Each claim should be TRICKY - not obviously one class or the other
+  </constraints>
+
+  Generate {batch_size} adversarial claims now:
+
+# Label descriptions (explicit about what makes something checkworthy or not)
+label_descriptions:
+  "No": |
+    NOT checkworthy (label=No).
+    These claims should APPEAR to be factual but actually be:
+    - Opinions or personal beliefs
+    - Predictions about the future
+    - Vague statements with no verifiable specifics
+    - Rhetorical flourishes or political promises
+    - Questions or hypotheticals
+    A fact-checker would NOT prioritize these because they cannot be objectively verified.
+  "Yes": |
+    CHECKWORTHY (label=Yes).
+    These claims MUST be specific, verifiable factual assertions that:
+    - Contain concrete numbers, dates, or statistics
+    - Make verifiable claims about events, policies, or people
+    - Could be confirmed or refuted with evidence
+    - A fact-checker SHOULD prioritize these for investigation.
+
+# Categories for hard negatives (label=No) - based on FP error analysis
+fp_categories:
+  policy_promises:
+    description: "Political promises and future-oriented statements that sound factual but are not verifiable because they describe intentions, not facts"
+    examples:
+      - "We're going to make America great again"
+      - "Under my plan, everyone will have healthcare"
+      - "I will bring back jobs to this country"
+      - "We're going to cut taxes for the middle class"
+      - "My administration will end corruption"
+    weight: 0.25
+
+  historical_context:
+    description: "References to history that are vague, subjective, or based on interpretation rather than verifiable facts"
+    examples:
+      - "This is the worst economy we've ever had"
+      - "Our country has never been more divided"
+      - "Things were better before all this happened"
+      - "We've lost our way as a nation"
+      - "The founding fathers would be ashamed"
+    weight: 0.20
+
+  vague_rhetoric:
+    description: "Political rhetoric using superlatives, vague quantifiers, and appeals to unnamed sources that cannot be verified"
+    examples:
+      - "Many people are saying this is a disaster"
+      - "Everyone knows the system is broken"
+      - "The best people agree with me"
+      - "A lot of experts have concerns"
+      - "People are very upset about this"
+    weight: 0.25
+
+  opinion_statements:
+    description: "Personal opinions, beliefs, and value judgments phrased assertively but not objectively verifiable"
+    examples:
+      - "I think we need stronger borders"
+      - "In my view, this policy is wrong"
+      - "I believe Americans deserve better"
+      - "This is the most important issue of our time"
+      - "We should be ashamed of ourselves"
+    weight: 0.15
+
+  questions_and_hypotheticals:
+    description: "Rhetorical questions and hypothetical scenarios that don't make factual claims"
+    examples:
+      - "What if we could solve this problem?"
+      - "Wouldn't it be great if everyone had a job?"
+      - "How can anyone support this policy?"
+      - "Why aren't we doing more?"
+      - "Imagine if we invested in our future"
+    weight: 0.15
+
+# Categories for hard positives (label=Yes) - based on FN error analysis
+fn_categories:
+  short_punchy_claims:
+    description: "Brief factual claims with specific numbers or verifiable assertions that may look casual but are actually checkworthy"
+    examples:
+      - "Crime is up 30% this year"
+      - "Unemployment hit record lows"
+      - "Tax revenue increased by billions"
+      - "We've lost 100,000 manufacturing jobs"
+      - "Drug prices doubled under this administration"
+    weight: 0.30
+
+  accusations_with_specifics:
+    description: "Accusations and allegations that contain specific, verifiable details about votes, amounts, or actions"
+    examples:
+      - "The senator voted against veterans 12 times"
+      - "They took $2 million from lobbyists"
+      - "The administration deported 3 million people"
+      - "He missed 40% of committee votes"
+      - "She accepted donations from foreign governments"
+    weight: 0.25
+
+  quoted_statistics:
+    description: "Claims embedded in quotes or attributed to sources that contain verifiable statistics"
+    examples:
+      - "According to experts, 50% of jobs will be automated"
+      - "Studies show the policy saved $10 billion"
+      - "Reports indicate crime dropped 20%"
+      - "The CBO says this will add $2 trillion to the debt"
+      - "Economists estimate 500,000 jobs were created"
+    weight: 0.20
+
+  comparative_claims:
+    description: "Comparisons between time periods, administrations, or policies with specific verifiable metrics"
+    examples:
+      - "More Americans are uninsured than in 2010"
+      - "Gas prices are higher than last year"
+      - "We have fewer jobs than before the recession"
+      - "Crime is lower now than under the previous administration"
+      - "Wages have grown faster than inflation"
+    weight: 0.15
+
+  contemporary_topics:
+    description: "Modern political topics (2019-2024) addressing temporal distribution shift in training data"
+    examples:
+      - "The vaccine was developed in record time"
+      - "Mail-in voting led to fraud in several states"
+      - "The laptop contained evidence of corruption"
+      - "The border saw 2 million crossings this year"
+      - "Inflation hit a 40-year high last month"
+    weight: 0.10
+
+# Generation parameters
+generation_params:
+  temperature: 0.9  # Higher for diversity
+  max_tokens: 2000
+  # GPT-4.1-mini is literal - these explicit instructions matter
+  presence_penalty: 0.3  # Encourage topic variety
+  frequency_penalty: 0.3  # Discourage repetitive phrasing

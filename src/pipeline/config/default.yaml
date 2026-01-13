@@ -1,0 +1,69 @@
+# Pipeline Configuration
+# ======================
+
+# Data settings
+data:
+  input_file: "data/processed/tweets_v9.parquet"
+  text_column: "tweet_enriched"
+  id_column: "id"
+  output_dir: "data/pipeline_output"
+
+# Subset for testing (null = full dataset)
+# Options: 10, 100, 1000, 10000, 100000, 500000, null
+subset_size: 1000
+
+# Claim Gate settings
+claim_gate:
+  enabled: true
+  min_word_count: 5
+  max_word_count: 100
+  min_char_count: 20
+  filter_questions: true
+  filter_reactions: true
+  require_verb: true
+  # Common reaction words/phrases to filter
+  reaction_patterns:
+    - "^(wow|omg|lol|lmao|haha|damn|whoa|yikes|oof)$"
+    - "^(yes|no|nope|yep|yeah|nah)$"
+    - "^(great|awesome|amazing|cool|nice)!*$"
+  # Assign this cluster_id to filtered tweets
+  filtered_cluster_id: -1
+
+# Embedder settings
+embedder:
+  enabled: true
+  model_name: "all-mpnet-base-v2"  # or "all-MiniLM-L6-v2" for speed
+  batch_size: 64
+  normalize: true
+  device: "mps"  # "cpu", "cuda", "mps" for M1/M2
+  cache_embeddings: true
+  cache_file: "embeddings_cache.npy"
+
+# Clusterer settings
+clusterer:
+  enabled: true
+  algorithm: "online_cosine"  # or "hdbscan", "kmeans"
+  similarity_threshold: 0.75
+  min_cluster_size: 3
+  # Time bucket for incremental processing (minutes)
+  time_bucket_minutes: 60
+  # Persist cluster state
+  persist_state: true
+  state_file: "cluster_state.pkl.gz"
+
+# Claim Extractor settings (LLM - optional)
+claim_extractor:
+  enabled: false  # Enable only when needed
+  model: "claude-3-5-haiku-latest"
+  max_tweets_per_cluster: 5
+  min_cluster_size_for_extraction: 10
+
+# MLflow settings
+mlflow:
+  experiment_name: "claim_clustering"
+  tracking_uri: "mlruns"
+
+# Logging
+logging:
+  level: "INFO"
+  file: "pipeline.log"

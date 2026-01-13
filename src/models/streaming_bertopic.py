@@ -19,6 +19,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import IncrementalPCA
 from sklearn.feature_extraction.text import CountVectorizer
+
 from src.utils.paths import get_repo_root, resolve_path
 
 warnings.filterwarnings("ignore")
@@ -48,11 +49,19 @@ def configure_experiment(name: str, artifact_root: str) -> None:
     mlflow.set_experiment(experiment_name=name)
 
 
-def parse_timestamp(df: pl.DataFrame, created_at_col: str = "created_at", date_col: str = "date", time_col: str = "time") -> pl.Series:
+def parse_timestamp(
+    df: pl.DataFrame, created_at_col: str = "created_at", date_col: str = "date", time_col: str = "time"
+) -> pl.Series:
     if created_at_col in df.columns:
-        return df[created_at_col].str.replace(r" [A-Z]{3,4}$", "").str.to_datetime(format="%Y-%m-%d %H:%M:%S", strict=False)
+        return (
+            df[created_at_col]
+            .str.replace(r" [A-Z]{3,4}$", "")
+            .str.to_datetime(format="%Y-%m-%d %H:%M:%S", strict=False)
+        )
     elif date_col in df.columns and time_col in df.columns:
-        return pl.concat_str([df[date_col].cast(pl.Utf8), pl.lit(" "), df[time_col].cast(pl.Utf8)]).str.to_datetime(format="%Y-%m-%d %H:%M:%S", strict=False)
+        return pl.concat_str([df[date_col].cast(pl.Utf8), pl.lit(" "), df[time_col].cast(pl.Utf8)]).str.to_datetime(
+            format="%Y-%m-%d %H:%M:%S", strict=False
+        )
     else:
         return df.to_series(0).str.to_datetime(format="%Y-%m-%d %H:%M:%S", strict=False)
 
@@ -98,18 +107,24 @@ def read_data_chunks(file_path: str, chunk_size: int) -> Generator[pl.DataFrame]
 
 
 class StreamingBERTopicPipeline:
-    def __init__(self,
-                 output_dir: str,
-                 embedding_model_name: str = "all-MiniLM-L6-v2",
-                 pca_dim: int = 64,
-                 n_clusters: int = 100,
-                 batch_size_embed: int = 256):
+    def __init__(
+        self,
+        output_dir: str,
+        embedding_model_name: str = "all-MiniLM-L6-v2",
+        pca_dim: int = 64,
+        n_clusters: int = 100,
+        batch_size_embed: int = 256,
+    ):
         self.output_dir = output_dir
         ensure_dir(self.output_dir)
         ensure_dir(os.path.join(self.output_dir, "embeddings"))
 
         self.embedding_model_name = embedding_model_name
-        device = "mps" if hasattr(__import__('torch').backends, 'mps') and __import__('torch').backends.mps.is_available() else "cpu"
+        device = (
+            "mps"
+            if hasattr(__import__("torch").backends, "mps") and __import__("torch").backends.mps.is_available()
+            else "cpu"
+        )
         self.embedder = SentenceTransformer(self.embedding_model_name, device=device)
         logger.info("Using device: %s", device)
         self.pca_dim = pca_dim
@@ -137,7 +152,7 @@ class StreamingBERTopicPipeline:
             "doc_index": self.doc_index,
             "timestamps": [ts.isoformat() if ts is not None else None for ts in self.timestamps],
             "topic_assignments": self.topic_assignments,
-            "docs_len": len(self.docs)
+            "docs_len": len(self.docs),
         }
         docs_path = os.path.join(self.output_dir, "docs.txt")
         with open(docs_path, "w", encoding="utf-8") as fh:
@@ -179,15 +194,19 @@ class StreamingBERTopicPipeline:
         logger.info("Loaded pipeline: %d docs, %d topics", len(self.docs), len(set(self.topic_assignments)))
 
     def embed_texts(self, texts: list[str]) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
-        return self.embedder.encode(texts, batch_size=self.batch_size_embed, show_progress_bar=False, convert_to_numpy=True)
+        return self.embedder.encode(
+            texts, batch_size=self.batch_size_embed, show_progress_bar=False, convert_to_numpy=True
+        )
 
-    def initial_fit_stream(self,
-                           csv_path: str,
-                           text_col: str = "tweet",
-                           id_col: str = "id",
-                           created_at_col: str = "created_at",
-                           chunk_size: int = 20000,
-                           max_chunks: int | None = None) -> None:
+    def initial_fit_stream(
+        self,
+        csv_path: str,
+        text_col: str = "tweet",
+        id_col: str = "id",
+        created_at_col: str = "created_at",
+        chunk_size: int = 20000,
+        max_chunks: int | None = None,
+    ) -> None:
         logger.info("Starting initial fit stream from %s", csv_path)
 
         self.ipca = IncrementalPCA(n_components=self.pca_dim)
@@ -240,20 +259,25 @@ class StreamingBERTopicPipeline:
         self.save_state()
         logger.info("Initial streaming fit complete. Total docs: %d", len(self.docs))
 
-    def incremental_update(self,
-                           csv_path: str,
-                           text_col: str = "tweet",
-                           id_col: str = "id",
-                           created_at_col: str = "created_at",
-                           chunk_size: int = 5000,
-                           update_keywords: bool = True,
-                           reassign_on_update: bool = False) -> None:
+    def incremental_update(
+        self,
+        csv_path: str,
+        text_col: str = "tweet",
+        id_col: str = "id",
+        created_at_col: str = "created_at",
+        chunk_size: int = 5000,
+        update_keywords: bool = True,
+        reassign_on_update: bool = False,
+    ) -> None:
         if self.ipca is None or self.kmeans is None:
             raise RuntimeError("Pipeline models not initialized. Call initial_fit_stream or load_state first.")
 
         added = 0
-        existing_chunks = len([f for f in os.listdir(os.path.join(self.output_dir, "embeddings")) if f.endswith(".npy")]) \
-                          if os.path.exists(os.path.join(self.output_dir, "embeddings")) else 0
+        existing_chunks = (
+            len([f for f in os.listdir(os.path.join(self.output_dir, "embeddings")) if f.endswith(".npy")])
+            if os.path.exists(os.path.join(self.output_dir, "embeddings"))
+            else 0
+        )
         chunk_idx = existing_chunks
 
         for chunk in read_data_chunks(csv_path, chunk_size):
@@ -299,12 +323,14 @@ class StreamingBERTopicPipeline:
 
         self.save_state()
 
-    def assign_documents(self,
-                         csv_path: str,
-                         text_col: str = "tweet",
-                         id_col: str = "id",
-                         created_at_col: str = "created_at",
-                         chunk_size: int = 2000) -> pl.DataFrame:
+    def assign_documents(
+        self,
+        csv_path: str,
+        text_col: str = "tweet",
+        id_col: str = "id",
+        created_at_col: str = "created_at",
+        chunk_size: int = 2000,
+    ) -> pl.DataFrame:
         if self.ipca is None or self.kmeans is None:
             raise RuntimeError("Pipeline models not initialized. Call load_state first.")
 
@@ -322,12 +348,7 @@ class StreamingBERTopicPipeline:
             emb_reduced = self.ipca.transform(batch_emb)
             labels = self.kmeans.predict(emb_reduced).tolist()
 
-            result_df = pl.DataFrame({
-                id_col: ids,
-                "timestamp": ts_list,
-                "cleaned_text": docs,
-                "topic": labels
-            })
+            result_df = pl.DataFrame({id_col: ids, "timestamp": ts_list, "cleaned_text": docs, "topic": labels})
             result_chunks.append(result_df)
 
         return pl.concat(result_chunks) if result_chunks else pl.DataFrame()
@@ -344,17 +365,18 @@ class StreamingBERTopicPipeline:
             labels = self.kmeans.predict(emb_reduced).tolist()
             all_labels.extend(labels)
         if len(all_labels) != len(self.docs):
-            logger.warning("Reassigned labels count differs from docs count (%d vs %d). Skipping overwrite.", len(all_labels), len(self.docs))
+            logger.warning(
+                "Reassigned labels count differs from docs count (%d vs %d). Skipping overwrite.",
+                len(all_labels),
+                len(self.docs),
+            )
         else:
             self.topic_assignments = [int(x) for x in all_labels]
             logger.info("Reassignment complete.")
 
     def build_topic_keywords(self, top_n: int = 12) -> dict[int, list[str]]:
         logger.info("Building topic keywords using c-TF-IDF style aggregation...")
-        df = pl.DataFrame({
-            "topic": self.topic_assignments,
-            "doc": self.docs
-        })
+        df = pl.DataFrame({"topic": self.topic_assignments, "doc": self.docs})
         grouped = df.group_by("topic").agg(pl.col("doc").str.concat(" ")).sort("topic")
         topics = grouped["topic"].to_list()
         docs_by_topic = grouped["doc"].to_list()
@@ -381,15 +403,10 @@ class StreamingBERTopicPipeline:
         freq_map = {"H": "1h", "D": "1d", "W": "1w", "M": "1mo"}
         interval = freq_map.get(time_freq, "1d")
 
-        df = pl.DataFrame({
-            "topic": self.topic_assignments,
-            "timestamp": self.timestamps
-        })
+        df = pl.DataFrame({"topic": self.topic_assignments, "timestamp": self.timestamps})
         df = df.filter(pl.col("timestamp").is_not_null())
 
-        df = df.with_columns(
-            pl.col("timestamp").dt.truncate(interval).alias("time_bin")
-        )
+        df = df.with_columns(pl.col("timestamp").dt.truncate(interval).alias("time_bin"))
 
         ts = df.group_by(["topic", "time_bin"]).agg(pl.len().alias("count"))
         ts = ts.sort(["topic", "time_bin"])
@@ -398,7 +415,9 @@ class StreamingBERTopicPipeline:
 
         return ts_pivot
 
-    def plot_top_k_topics(self, ts: pl.DataFrame, topic_keywords: dict[int, list[str]], top_k: int = 10, time_freq: str = "D") -> go.Figure | None:
+    def plot_top_k_topics(
+        self, ts: pl.DataFrame, topic_keywords: dict[int, list[str]], top_k: int = 10, time_freq: str = "D"
+    ) -> go.Figure | None:
         if ts.shape[0] == 0:
             logger.warning("Empty timeseries — nothing to plot.")
             return None
@@ -421,23 +440,25 @@ class StreamingBERTopicPipeline:
                 keywords = topic_keywords.get(topic, [])[:3]
                 label = f"Topic {topic}: {', '.join(keywords)}"
 
-                fig.add_trace(go.Scatter(
-                    x=time_cols,
-                    y=values,
-                    mode='lines+markers',
-                    name=label,
-                    hovertemplate=f'{label}<br>Time: %{{x}}<br>Count: %{{y}}<extra></extra>'
-                ))
+                fig.add_trace(
+                    go.Scatter(
+                        x=time_cols,
+                        y=values,
+                        mode="lines+markers",
+                        name=label,
+                        hovertemplate=f"{label}<br>Time: %{{x}}<br>Count: %{{y}}<extra></extra>",
+                    )
+                )
 
         fig.update_layout(
             title=f"Top {top_k} Topics Over Time ({time_freq})",
             xaxis_title="Time",
             yaxis_title="Document Count",
-            hovermode='x unified',
-            template='plotly_white',
+            hovermode="x unified",
+            template="plotly_white",
             height=600,
             width=1200,
-            legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01),
         )
 
         return fig
@@ -497,23 +518,25 @@ def main(args: Any) -> None:
     configure_experiment("streaming_bertopic", artifact_root)
 
     with mlflow.start_run(run_name=f"{args.mode}_{args.n_clusters}topics"):
-        mlflow.log_params({
-            "mode": args.mode,
-            "embedding_model": args.embedding_model,
-            "pca_dim": args.pca_dim,
-            "n_clusters": args.n_clusters,
-            "chunk_size": args.chunk_size,
-            "batch_size_embed": args.batch_size_embed,
-            "time_freq": args.time_freq,
-            "max_init_chunks": args.max_init_chunks or "all"
-        })
+        mlflow.log_params(
+            {
+                "mode": args.mode,
+                "embedding_model": args.embedding_model,
+                "pca_dim": args.pca_dim,
+                "n_clusters": args.n_clusters,
+                "chunk_size": args.chunk_size,
+                "batch_size_embed": args.batch_size_embed,
+                "time_freq": args.time_freq,
+                "max_init_chunks": args.max_init_chunks or "all",
+            }
+        )
 
         pipeline = StreamingBERTopicPipeline(
             output_dir=str(output_dir),
             embedding_model_name=args.embedding_model,
             pca_dim=args.pca_dim,
             n_clusters=args.n_clusters,
-            batch_size_embed=args.batch_size_embed
+            batch_size_embed=args.batch_size_embed,
         )
 
         if args.mode == "init_fit":
@@ -523,17 +546,19 @@ def main(args: Any) -> None:
                 id_col="id",
                 created_at_col="created_at",
                 chunk_size=args.chunk_size,
-                max_chunks=args.max_init_chunks
+                max_chunks=args.max_init_chunks,
             )
             kws = pipeline.build_topic_keywords()
             ts = pipeline.build_topic_timeseries(time_freq=args.time_freq)
             fig = pipeline.plot_top_k_topics(ts, kws, top_k=10, time_freq=args.time_freq)
 
-            mlflow.log_metrics({
-                "total_documents": len(pipeline.docs),
-                "total_topics": len(set(pipeline.topic_assignments)),
-                "unique_topics": len(kws)
-            })
+            mlflow.log_metrics(
+                {
+                    "total_documents": len(pipeline.docs),
+                    "total_topics": len(set(pipeline.topic_assignments)),
+                    "unique_topics": len(kws),
+                }
+            )
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 kw_path = os.path.join(tmpdir, "topic_keywords.json")
@@ -564,16 +589,15 @@ def main(args: Any) -> None:
                 created_at_col="created_at",
                 chunk_size=args.chunk_size,
                 update_keywords=False,
-                reassign_on_update=False
+                reassign_on_update=False,
             )
             kws = pipeline.build_topic_keywords()
             ts = pipeline.build_topic_timeseries(time_freq=args.time_freq)
             fig = pipeline.plot_top_k_topics(ts, kws, top_k=10, time_freq=args.time_freq)
 
-            mlflow.log_metrics({
-                "total_documents": len(pipeline.docs),
-                "total_topics": len(set(pipeline.topic_assignments))
-            })
+            mlflow.log_metrics(
+                {"total_documents": len(pipeline.docs), "total_topics": len(set(pipeline.topic_assignments))}
+            )
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 kw_path = os.path.join(tmpdir, "topic_keywords.json")
@@ -597,7 +621,7 @@ def main(args: Any) -> None:
                 text_col="tweet",
                 id_col="id",
                 created_at_col="created_at",
-                chunk_size=args.chunk_size
+                chunk_size=args.chunk_size,
             )
 
             mlflow.log_metric("assigned_documents", assigned_df.shape[0])
@@ -617,6 +641,7 @@ def main(args: Any) -> None:
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1:
         args = parse_args()
     else:

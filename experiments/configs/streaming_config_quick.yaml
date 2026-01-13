@@ -1,0 +1,90 @@
+# QUICK VALIDATION CONFIG
+# ========================
+# Processes only 2 days of data for fast iteration (~5-10 min)
+# Use this to validate the pipeline before full runs
+
+data:
+  file_path: "data/raw/us_elections_tweets.parquet"
+  time_column: "created_at"
+  text_column: "tweet"
+  # Only process election day + 1 day (high activity, good test)
+  start_date: "2020-11-03"
+  end_date: "2020-11-05"
+
+simulator:
+  window_size: "1h"
+  lookback_hours: 24  # Shorter lookback for quick run
+
+claim_gate:
+  enabled: true
+  min_words: 5
+  max_words: 100
+  filter_questions: true
+  filter_reactions: true
+  require_verb: true
+  filter_retweets: true
+
+embedder:
+  enabled: true
+  model_name: "all-MiniLM-L6-v2"  # FASTER model (384-dim vs 768-dim)
+  batch_size: 128  # Larger batches
+  device: "mps"
+  normalize: true
+  cache_embeddings: true
+  show_progress: false  # Less verbose
+
+clusterer:
+  algorithm: "online_cosine"
+  similarity_threshold: 0.65  # More permissive to reduce cluster count
+  min_cluster_size: 1
+  max_clusters: 50000  # Higher cap for election spike
+  max_representatives_per_cluster: 5
+  save_state: true
+  state_file: "clusterer_state.npz"
+
+anomaly:
+  enabled: true
+  z_threshold: 3.0
+  z_window_hours: 24  # Shorter window
+  min_observations: 6  # Fewer required observations
+  min_std_count: 2.0
+  min_std_engagement: 5.0
+  count_weight: 0.4
+  engagement_weight: 0.6
+  min_count: 5  # Lower threshold to see more anomalies
+  min_engagement: 25
+  kleinberg_enabled: true
+  kleinberg_n_states: 3
+  kleinberg_gamma: 1.0
+  kleinberg_trigger_state: 2
+
+groq:
+  enabled: true
+  model: "llama-3.1-8b-instant"
+  max_tokens: 256
+  temperature: 0.3
+  max_tweets_per_cluster: 5
+  rate_limit_rpm: 30
+  timeout_seconds: 30.0
+
+registry:
+  enabled: true
+  dedup_threshold: 0.85
+  max_tweets_for_normalization: 5
+  min_cluster_size: 5  # Lower for quick validation
+
+virality:
+  enabled: true
+  model_path: "model/virality_xgboost.pkl"
+  peek_hours: 6
+  horizon_hours: 48  # Shorter horizon for quick feedback
+  virality_threshold: 500  # Lower threshold
+  virality_window_hours: 4
+  min_tweets_for_prediction: 3
+
+output:
+  output_dir: "data/pipeline_output/streaming_quick"
+  save_every_n_windows: 12  # More frequent checkpoints
+
+mlflow:
+  enabled: false  # Skip MLflow for quick runs

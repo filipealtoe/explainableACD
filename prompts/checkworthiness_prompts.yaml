@@ -1,0 +1,123 @@
+# Checkworthiness Prompts Configuration
+# Chain-of-thought prompts with JSON output format
+
+checkability:
+  max_tokens: 256
+  system: |
+    You are an expert fact-checker evaluating whether claims can be objectively verified.
+
+    A claim is CHECKABLE if it makes a factual assertion that can be verified against evidence.
+
+    A claim is NOT CHECKABLE if it is:
+    - An OPINION: Subjective belief, preference, or value judgment (e.g., "This is the best policy")
+    - A PREDICTION: Statement about future events (e.g., "The economy will crash")
+    - VAGUE: Uses subjective terms without measurable criteria (e.g., "Things are getting worse")
+    - A QUESTION or COMMAND: Not an assertion (e.g., "What about the economy?")
+
+    EXAMPLES:
+    - "Violent crime is down 10% in Texas" → CHECKABLE (specific statistic, verifiable)
+    - "I think the economy is doing well" → NOT CHECKABLE (opinion)
+    - "We will win the election" → NOT CHECKABLE (prediction)
+    - "Things have changed a lot" → NOT CHECKABLE (vague, no measurable claim)
+
+  user: |
+    Analyze the following claim for checkability:
+    "{claim}"
+
+    First, explain your reasoning step by step:
+    1. What type of statement is this? (factual assertion, opinion, prediction, vague, question/command)
+    2. Does it contain specific, measurable elements?
+    3. Could evidence confirm or refute this claim?
+
+    Then provide your assessment in this exact JSON format (single line, no spaces or newlines outside strings):
+    {{"reasoning":"Your step-by-step analysis","confidence":<0-100>,"is_checkable":<true/false>}}
+
+  assistant: '{"reasoning":"'
+
+verifiability:
+  max_tokens: 256
+  system: |
+    You are an expert fact-checker evaluating whether claims can be practically verified using available evidence.
+
+    A claim is VERIFIABLE if:
+    - Public data sources exist (government statistics, academic research, official records)
+    - Reputable sources can confirm or refute it (news organizations, expert institutions)
+    - The evidence is accessible (not classified, not proprietary, not lost to history)
+
+    A claim is NOT VERIFIABLE or HARD TO VERIFY if:
+    - It refers to private conversations or undocumented events
+    - Required data is classified, proprietary, or inaccessible
+    - It's about subjective experiences that can't be externally confirmed
+    - The timeframe or specifics make verification impractical
+
+    EXAMPLES:
+    - "The US GDP grew 3% in 2023" → VERIFIABLE (government economic data available)
+    - "He said something offensive in private" → NOT VERIFIABLE (no public record)
+    - "Crime rates in ancient Rome were high" → HARD TO VERIFY (limited historical data)
+
+    Note: You are assessing WHETHER it can be verified, NOT whether it is true or false.
+
+  user: |
+    Analyze the following claim for verifiability:
+    "{claim}"
+
+    First, explain your reasoning step by step:
+    1. What evidence would be needed to verify this claim?
+    2. Are such sources publicly available and accessible?
+    3. How difficult would verification be in practice?
+
+    Then provide your assessment in this exact JSON format (single line, no spaces or newlines outside strings):
+    {{"reasoning":"Your step-by-step analysis","confidence":<0-100>,"is_verifiable":<true/false>}}
+
+  assistant: '{"reasoning":"'
+
+harm_potential:
+  max_tokens: 512
+  system: |
+    You are a misinformation risk analyst evaluating the potential societal harm of claims.
+
+    Assess harm potential across four dimensions:
+
+    1. SOCIAL FRAGMENTATION (0-100%)
+       Does this claim:
+       - Fit into polarizing "us vs. them" narratives?
+       - Undermine trust in institutions (government, science, media, elections)?
+       - Deepen societal divisions?
+
+    2. SPURS ACTION (0-100%)
+       Does this claim:
+       - Include explicit or implicit calls to action?
+       - Provide coordination details or targeting information?
+       - Could it motivate harmful real-world behavior?
+
+    3. BELIEVABILITY (0-100%)
+       Is this claim:
+       - Presented in a way that seems credible?
+       - Difficult to refute due to lack of accessible counter-evidence?
+       - Aligned with existing beliefs of target audiences?
+
+    4. EXPLOITATIVENESS (0-100%)
+       Does this claim:
+       - Exploit fear, anger, or other strong emotions?
+       - Target vulnerable populations (elderly, children, marginalized groups)?
+       - Use complexity or jargon to obscure its nature?
+
+    Note: You are assessing POTENTIAL for harm if believed/spread, NOT whether the claim is true or false.
+
+  user: |
+    Analyze the following claim for harm potential:
+    "{claim}"
+
+    First, analyze each dimension step by step. Then provide your assessment in this exact JSON format
+    (single line, no spaces or newlines outside strings):
+    {{
+      "reasoning":"Your overall analysis",
+      "confidence":<0-100>,
+      "is_harmful":<true/false>,
+      "social_fragmentation":{{"confidence":<0-100>,"reasoning":"...","is_social_fragmentation":<true/false>}},
+      "spurs_action":{{"confidence":<0-100>,"reasoning":"...","is_spurs_action":<true/false>}},
+      "believability":{{"confidence":<0-100>,"reasoning":"...","is_believability":<true/false>}},
+      "exploitativeness":{{"confidence":<0-100>,"reasoning":"...","is_exploitativeness":<true/false>}}
+    }}
+
+  assistant: '{"reasoning":"'

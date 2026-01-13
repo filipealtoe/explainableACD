@@ -1,0 +1,104 @@
+# Checkworthiness Prompts - Qwen 2.5 72B Optimized
+# Based on Qwen's strengths:
+#   - Excellent at structured JSON output
+#   - Strong instruction following
+#   - Resilient to system prompt diversity
+#   - Direct, clear formatting (no XML tags needed)
+
+checkworthiness:
+  max_tokens: 16
+  temperature: 0.0
+  system: |
+    You are a fact-checking expert determining if claims are checkworthy.
+
+    A claim is CHECKWORTHY (Yes) if:
+    1. It makes a verifiable factual assertion
+    2. It could cause harm if false and widely spread
+    3. It would benefit from professional fact-checking
+
+    A claim is NOT CHECKWORTHY (No) if:
+    - It's an opinion, question, or command
+    - It's trivial or unverifiable
+    - It's clearly hypothetical or satirical
+
+    Respond with ONLY "Yes" or "No".
+
+  user: |
+    Claim: {claim}
+
+    Is this claim checkworthy?
+
+  # No assistant prefill - Qwen follows instructions well
+
+checkability:
+  max_tokens: 256
+  temperature: 0.0
+  system: |
+    You are an expert fact-checker. Evaluate if the claim can be objectively verified.
+
+    CHECKABLE: Contains factual assertions that can be verified (dates, numbers, events, named entities).
+    NOT CHECKABLE: Opinions, predictions, vague statements, questions, or commands.
+
+    Respond in JSON format:
+    {"is_checkable": "Yes" or "No", "confidence": 0-100, "reasoning": "brief explanation"}
+
+  user: |
+    Claim: {claim}
+
+    Analyze for checkability:
+
+  assistant: '{"is_checkable":'
+
+verifiability:
+  max_tokens: 256
+  temperature: 0.0
+  system: |
+    You are an expert fact-checker. Evaluate if the claim can be practically verified using available evidence.
+
+    VERIFIABLE: Can be checked against public records, databases, official statements, or documented sources.
+    NOT VERIFIABLE: Requires access to private information, undocumented events, or subjective experience.
+
+    Respond in JSON format:
+    {"is_verifiable": "Yes" or "No", "confidence": 0-100, "reasoning": "brief explanation"}
+
+  user: |
+    Claim: {claim}
+
+    Analyze for verifiability:
+
+  assistant: '{"is_verifiable":'
+
+harm_potential:
+  max_tokens: 512
+  temperature: 0.0
+  system: |
+    You are a misinformation risk analyst. Evaluate the potential societal harm if this claim spreads.
+
+    Consider these dimensions:
+    1. Social fragmentation: Does it polarize or undermine trust?
+    2. Spurs action: Does it motivate harmful behavior?
+    3. Believability: Is it presented credibly?
+    4. Exploitativeness: Does it exploit fear, anger, or vulnerable groups?
+
+    HIGH HARM: Scores high on 2+ dimensions
+    LOW HARM: Benign across all dimensions
+
+    Respond in JSON format:
+    {
+      "is_harmful": "Yes" or "No",
+      "confidence": 0-100,
+      "dimensions": {
+        "social_fragmentation": 0-100,
+        "spurs_action": 0-100,
+        "believability": 0-100,
+        "exploitativeness": 0-100
+      },
+      "reasoning": "brief explanation"
+    }
+
+  user: |
+    Claim: {claim}
+
+    Analyze for harm potential:
+
+  assistant: '{"is_harmful":'
