@@ -132,24 +132,33 @@ See `architecture.jpeg` for the visual system diagram. The pipeline has two main
 
 ```
 explainableACD/
-├── src/                          # Core source code
-│   ├── checkworthiness/          # LLM-based checkworthiness pipeline
-│   │   ├── config.py             # Model configs (OpenAI, DeepSeek, xAI, Moonshot)
-│   │   ├── schemas.py            # Pydantic output schemas
-│   │   ├── modules.py            # DSPy modules and signatures
-│   │   └── prompting_baseline.py # Direct API baseline (no DSPy)
+├── claim_norm/                   # Claim normalization package (CT25 Task 2)
+│   ├── scripts/                  # Canonical normalization scripts
+│   ├── prompts/                  # claim_normalization.yaml
+│   └── src/                      # Normalization modules
+├── claim_checkworthiness/        # Checkworthiness assessment package (IJCAI 2026)
+│   ├── scripts/                  # 120+ experiment scripts (organized by purpose)
+│   │   ├── runners/              # Core experiment runners
+│   │   ├── finetuning/           # DeBERTa fine-tuning
+│   │   ├── evaluation/           # Benchmark evaluation
+│   │   ├── ensemble/             # Ensemble methods
+│   │   ├── feature_engineering/  # Feature generation
+│   │   ├── analysis/             # Error analysis
+│   │   ├── hyperparameter_tuning/# Grid/greedy search
+│   │   ├── data_processing/      # Dataset prep
+│   │   └── utilities/            # Testing/debugging
+│   ├── prompts/                  # checkworthiness_prompts_zeroshot_v4.yaml
+│   ├── baml_src/                 # BAML type definitions
+│   └── src/checkworthiness/      # Core modules (config, schemas, modules, etc.)
+├── src/                          # Shared utilities
 │   ├── models/
 │   │   ├── streaming_bertopic.py # Streaming topic modeling with MLflow
 │   │   └── anomaly_detection.py  # Anomaly detection for virality
 │   ├── pipeline/                 # Data processing pipeline
 │   │   └── modules/              # Embedder, clusterer, claim extraction
 │   └── utils/                    # Path utilities
-├── prompts/
-│   └── checkworthiness_prompts.yaml  # Original + improved prompt versions
-├── experiments/
-│   ├── scripts/                  # Experiment runner scripts
-│   │   ├── clean_dataset_phase*.py   # Data cleaning pipeline (9 phases)
-│   │   └── run_*.py              # Various experiment runners
+├── experiments/                  # Legacy experiments (streaming, anomaly, virality)
+│   ├── scripts/                  # Non-checkworthiness scripts (~70 remaining)
 │   └── results/                  # Experiment outputs
 ├── data/
 │   ├── raw/                      # Raw datasets (parquet format, LFS)
@@ -214,6 +223,17 @@ Custom skills in `.claude/skills/`:
   - Commit messages should read as if written entirely by the human developer
 
 - **Use `claim_norm/` directory for claim normalization scripts** — The canonical location for `run_claim_normalization_ct25.py` is `claim_norm/scripts/`, not `experiments/scripts/`. Always edit and reference the `claim_norm/` version.
+
+- **Use `claim_checkworthiness/` directory for checkworthiness scripts** — The canonical location for checkworthiness experiments is `claim_checkworthiness/scripts/`, not `experiments/scripts/` or `src/checkworthiness/`. Always edit and reference the `claim_checkworthiness/` version. Scripts are organized by purpose:
+  - `scripts/runners/` — Core experiment runners (run_prompting_baseline.py, etc.)
+  - `scripts/finetuning/` — DeBERTa and model fine-tuning
+  - `scripts/evaluation/` — Benchmark evaluation
+  - `scripts/analysis/` — Error analysis and visualization
+  - `scripts/hyperparameter_tuning/` — Grid search and optimization
+  - `scripts/feature_engineering/` — Embedding and feature generation
+  - `scripts/ensemble/` — Ensemble methods
+  - `scripts/data_processing/` — Dataset preparation
+  - `scripts/utilities/` — Testing and debugging
 
 - **Document design approaches before implementation** — When implementing a design alternative or significant feature:
   1. Present a structured plan to the user for approval

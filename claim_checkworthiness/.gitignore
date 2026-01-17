@@ -1,0 +1,30 @@
+# Data
+data/*.csv
+data/*.tsv
+data/*.parquet
+
+# Results
+results/*.json
+results/*.jsonl
+results/*.csv
+
+# Checkpoints
+checkpoints/
+
+# Cache
+__pycache__/
+.cache/
+*.pyc
+
+# Python packaging
+*.egg-info/
+.venv/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

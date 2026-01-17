@@ -2569,7 +2569,7 @@ def save_comparison_summary(all_stats: dict[str, dict], split: str, results_dir:
 
 def main():
     parser = argparse.ArgumentParser(description="Claim Normalization on CT25")
-    parser.add_argument("--model", type=str, default="mixtral-8x7b",
+    parser.add_argument("--model", type=str, default="deepseek-v3.1",
                         help=f"Model to use. Available: {list(MODELS.keys())}")
     parser.add_argument("--split", type=str, default="dev",
                         choices=["train", "dev", "test"])
@@ -2588,7 +2588,7 @@ def main():
     parser.add_argument("--compare-models", action="store_true",
                         help="Compare all eligible models")
     # Few-shot options
-    parser.add_argument("--num-examples", type=int, default=3,
+    parser.add_argument("--num-examples", type=int, default=5,
                         help="Number of few-shot examples (default 3, use 0 for zero-shot)")
     parser.add_argument("--zero-shot", action="store_true",
                         help="Use zero-shot prompting (no examples)")
@@ -2604,7 +2604,7 @@ def main():
                         help="Similarity threshold for retrieval fallback (default 0.85). "
                              "If a training example has similarity >= threshold, use its claim directly. "
                              "Set to 1.0 to disable retrieval fallback.")
-    parser.add_argument("--claim-verify-threshold", type=float, default=0.5,
+    parser.add_argument("--claim-verify-threshold", type=float, default=0.65,
                         help="Threshold for claim verification in retrieval (default 0.5). "
                              "Retrieved claim must be this similar to query post to be used.")
     parser.add_argument("--retrieval-mode", type=str, default="embedding",
@@ -2639,7 +2639,7 @@ def main():
     parser.add_argument("--contrastive-file", type=str, default=None,
                         help="Path to results .jsonl file for contrastive learning. "
                              "Extracts good (high METEOR) and bad (low METEOR) examples.")
-    parser.add_argument("--contrastive-examples", type=int, default=1,
+    parser.add_argument("--contrastive-examples", type=int, default=2,
                         help="Number of bad examples to include in contrastive prompt (default: 1)")
     parser.add_argument("--contrastive-mode", type=str, default="similar",
                         choices=["similar", "random"],

@@ -30,6 +30,7 @@ Reference: See /Users/sergiopinto/.claude/plans/snug-tickling-melody.md for arch
 import argparse
 import asyncio
 import logging
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -211,6 +212,35 @@ async def run_pipeline(
     # Final save
     logger.info("Saving final outputs...")
     pipeline.save_outputs(output_dir)
+
+    # Run SOTA claim normalization on pipeline output
+    logger.info("=" * 70)
+    logger.info("RUNNING SOTA CLAIM NORMALIZATION")
+    logger.info("=" * 70)
+    claim_norm_script = root / "claim_norm" / "scripts" / "run_claim_normalization_ct25.py"
+    claim_norm_cmd = [
+        sys.executable,
+        str(claim_norm_script),
+        "--full-pipeline",
+        "--pipeline-dir", str(output_dir),
+        # SOTA settings (deepseek-v3.1, threshold=0.65, 5 examples, 2 contrastive)
+        "--model", "deepseek-v3.1",
+        "--retrieval-threshold", "0.85",
+        "--claim-verify-threshold", "0.65",
+        "--num-examples", "5",
+        "--contrastive-examples", "2",
+    ]
+    logger.info(f"Running: {' '.join(claim_norm_cmd)}")
+    try:
+        result = subprocess.run(claim_norm_cmd, check=True, capture_output=True, text=True)
+        logger.info("Claim normalization completed successfully")
+        if result.stdout:
+            for line in result.stdout.strip().split("\n")[-10:]:  # Last 10 lines
+                logger.info(f"  {line}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Claim normalization failed: {e}")
+        if e.stderr:
+            logger.error(f"  stderr: {e.stderr[:500]}")
 
     # Print summary
     stats = pipeline.get_stats()

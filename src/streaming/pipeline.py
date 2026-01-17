@@ -166,6 +166,12 @@ def _get_checkworthiness_classes():
     """Lazy load checkworthiness classes to avoid import errors when not needed."""
     global _CheckworthinessPredictor, _CheckworthinessConfig
     if _CheckworthinessPredictor is None:
+        import sys
+        from pathlib import Path
+        # Add claim_checkworthiness package to path
+        package_root = Path(__file__).resolve().parents[1] / "claim_checkworthiness"
+        if str(package_root) not in sys.path:
+            sys.path.insert(0, str(package_root))
         from src.checkworthiness.predictor import CheckworthinessPredictor, CheckworthinessConfig
         _CheckworthinessPredictor = CheckworthinessPredictor
         _CheckworthinessConfig = CheckworthinessConfig
