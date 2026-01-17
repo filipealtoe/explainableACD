@@ -550,6 +550,7 @@ def main():
                         help="Comma-separated gamma values to try (with --tune)")
     parser.add_argument("--alphas", type=str, default="0.25,0.5,0.75",
                         help="Comma-separated alpha values to try (with --tune)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
 
     base_config = Config(
@@ -561,6 +562,7 @@ def main():
         max_length=args.max_length,
         focal_gamma=args.gamma,
         focal_alpha=args.alpha,
+        seed=args.seed,
     )
 
     model_short = args.model.split("/")[-1]

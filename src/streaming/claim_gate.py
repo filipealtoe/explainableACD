@@ -31,15 +31,24 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ClaimGateConfig:
-    """Configuration for the ClaimGate filter."""
+    """Configuration for the ClaimGate filter.
+
+    Relaxed defaults (2026-01-16):
+    - min_words: 4 (short claims exist: "Biden won Georgia")
+    - max_words: 150 (thread-style tweets can contain claims)
+    - filter_questions: False (questions embed claims: "Did you know Trump said X?")
+    - filter_reactions: True (pure noise, no information)
+    - require_verb: False (noun phrases can be claims: "Biden's $2T tax plan")
+    - filter_retweets: False (RTs show amplification, important for virality)
+    """
 
     enabled: bool = True
-    min_words: int = 5
-    max_words: int = 100
-    filter_questions: bool = True
-    filter_reactions: bool = True
-    require_verb: bool = True
-    filter_retweets: bool = True  # Filter "RT @..." tweets
+    min_words: int = 4
+    max_words: int = 150
+    filter_questions: bool = False
+    filter_reactions: bool = True  # Keep - reactions are pure noise
+    require_verb: bool = False
+    filter_retweets: bool = False  # Don't filter - RTs show virality/amplification
 
     @classmethod
     def from_dict(cls, config: dict) -> "ClaimGateConfig":

@@ -3,10 +3,17 @@
 Evaluate DeBERTa Ensemble on Multiple Benchmarks.
 
 Runs the 3-seed DeBERTa ensemble on:
-- ClaimBuster (crowdsourced)
-- CheckThat 2022 (CT22)
-- CheckThat 2023 (CT23)
-- CheckThat 2024 (CT24) - our training set
+- ClaimBuster crowdsourced (22,501 samples) - SOTA: 0.78 F1
+- ClaimBuster groundtruth (1,032 samples)  - SOTA: 0.92 F1 (G2CW)
+- CheckThat 2021 (CT21) - political debates, dev set, SOTA MAP=0.224
+- CheckThat 2022 (CT22) - tweets
+- CheckThat 2023 (CT23) - tweets
+- CheckThat 2024 (CT24) - our training set (political debates)
+
+ClaimBuster Binary Mapping:
+- CFS (Verdict=1)  → Yes (checkworthy)
+- UFS (Verdict=0)  → No (unimportant factual)
+- NFS (Verdict=-1) → No (non-factual)
 
 Compares results to published SOTA for each benchmark.
 
@@ -34,20 +41,31 @@ from tqdm import tqdm
 # =============================================================================
 
 SOTA_RESULTS = {
-    "ClaimBuster": {
+    "CB_crowdsourced": {
         "f1": 0.78,
         "source": "Hassan et al., 2017 (original ClaimBuster paper)",
         "notes": "SVM + linguistic features on crowdsourced data"
     },
+    "CB_groundtruth": {
+        "f1": 0.92,
+        "source": "G2CW (GloVe+GRU) - Neural Computing & Applications 2023",
+        "notes": "GloVe embeddings + GRU on expert-annotated groundtruth"
+    },
+    "CT21": {
+        "f1": 0.0,  # Official metric was MAP, not F1
+        "map": 0.224,  # SOTA MAP from NLP&IR@UNED
+        "source": "NLP&IR@UNED - CheckThat! 2021 Task 1A",
+        "notes": "Official metric: MAP=0.224, we report both F1 and MAP"
+    },
     "CT22": {
-        "f1": 0.64,
-        "source": "CheckThat! 2022 Task 1A Winner",
-        "notes": "Best submission on English test set"
+        "f1": 0.698,
+        "source": "AI Rational - CheckThat! 2022 Task 1A Winner",
+        "notes": "Task 1A English tweets (baseline: 0.253)"
     },
     "CT23": {
-        "f1": 0.67,
-        "source": "CheckThat! 2023 Task 1B Winner",
-        "notes": "Best submission on English test set"
+        "f1": 0.898,
+        "source": "OpenFact - CEUR-WS Vol-3497 paper-019",
+        "notes": "Task 1B English winner (checkworthy tweets)"
     },
     "CT24": {
         "f1": 0.82,
@@ -185,22 +203,101 @@ def evaluate_with_threshold_search(
     return best
 
 
+def compute_ranking_metrics(probs: np.ndarray, labels: np.ndarray) -> dict:
+    """Compute ranking metrics: MAP, MRR, P@k.
+
+    Ranks samples by probability (descending) and evaluates how well
+    the ranking places label=1 samples at the top.
+    """
+    # Sort by probability descending
+    sorted_idx = np.argsort(-probs)
+    sorted_labels = labels[sorted_idx]
+
+    n_relevant = labels.sum()
+    if n_relevant == 0:
+        return {"MAP": 0, "MRR": 0, "P@1": 0, "P@5": 0, "P@10": 0, "P@20": 0, "P@30": 0}
+
+    # MAP: Mean Average Precision
+    precisions_at_k = []
+    relevant_count = 0
+    for k, label in enumerate(sorted_labels, 1):
+        if label == 1:
+            relevant_count += 1
+            precisions_at_k.append(relevant_count / k)
+    map_score = np.mean(precisions_at_k) if precisions_at_k else 0
+
+    # MRR: Mean Reciprocal Rank (1/rank of first relevant item)
+    first_relevant_rank = np.where(sorted_labels == 1)[0]
+    mrr = 1.0 / (first_relevant_rank[0] + 1) if len(first_relevant_rank) > 0 else 0
+
+    # P@k: Precision at k
+    def precision_at_k(k):
+        return sorted_labels[:k].sum() / k if k <= len(sorted_labels) else 0
+
+    return {
+        "MAP": float(map_score),
+        "MRR": float(mrr),
+        "P@1": float(precision_at_k(1)),
+        "P@5": float(precision_at_k(5)),
+        "P@10": float(precision_at_k(10)),
+        "P@20": float(precision_at_k(20)),
+        "P@30": float(precision_at_k(30)),
+    }
+
+
 # =============================================================================
 # Dataset Loaders
 # =============================================================================
 
-def load_claimbuster(data_dir: Path) -> tuple[list[str], np.ndarray]:
-    """Load ClaimBuster crowdsourced dataset."""
+def load_claimbuster_crowdsourced(data_dir: Path) -> tuple[list[str], np.ndarray]:
+    """Load ClaimBuster crowdsourced dataset (22,501 samples)."""
     file_path = data_dir / "raw" / "claim_buster" / "crowdsourced.csv"
     df = pl.read_csv(file_path)
 
     texts = df["Text"].to_list()
 
-    # Verdict: -1 = not checkworthy, 0 = neutral, 1 = checkworthy
-    # We treat 1 as positive, -1 and 0 as negative (binary classification)
+    # Binary mapping: CFS (1) → Yes, UFS (0) + NFS (-1) → No
+    # CFS = Check-worthy Factual Statement
+    # UFS = Unimportant Factual Statement
+    # NFS = Non-Factual Statement
     labels = np.array([1 if v == 1 else 0 for v in df["Verdict"].to_list()])
 
     return texts, labels
+
+
+def load_claimbuster_groundtruth(data_dir: Path) -> tuple[list[str], np.ndarray]:
+    """Load ClaimBuster groundtruth dataset (1,032 samples, expert-annotated)."""
+    file_path = data_dir / "raw" / "claim_buster" / "groundtruth.csv"
+    df = pl.read_csv(file_path)
+
+    texts = df["Text"].to_list()
+
+    # Binary mapping: CFS (1) → Yes, UFS (0) + NFS (-1) → No
+    labels = np.array([1 if v == 1 else 0 for v in df["Verdict"].to_list()])
+
+    return texts, labels
+
+
+def load_ct21(data_dir: Path) -> tuple[list[str], np.ndarray]:
+    """Load CheckThat 2021 Task 1A English political debates (dev set).
+
+    Format: line_number | speaker | text | label (0/1)
+    No test set available, using dev for evaluation.
+    """
+    dev_dir = data_dir / "raw" / "check_that_21" / "1_a" / "dev"
+
+    all_texts = []
+    all_labels = []
+
+    for tsv_file in sorted(dev_dir.glob("*.tsv")):
+        df = pl.read_csv(tsv_file, separator="\t", has_header=False,
+                         new_columns=["line_num", "speaker", "text", "label"])
+        # Filter out SYSTEM rows (applause, etc.)
+        df = df.filter(pl.col("speaker") != "SYSTEM")
+        all_texts.extend(df["text"].to_list())
+        all_labels.extend(df["label"].to_list())
+
+    return all_texts, np.array(all_labels)
 
 
 def load_ct22(data_dir: Path) -> tuple[list[str], np.ndarray]:
@@ -259,6 +356,8 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--threshold", type=float, default=None,
                         help="Fixed threshold. If not set, searches for best.")
+    parser.add_argument("--benchmarks", type=str, nargs="+", default=None,
+                        help="Only run specific benchmarks (e.g., --benchmarks CT24)")
     args = parser.parse_args()
 
     print("=" * 70)
@@ -278,12 +377,23 @@ def main():
         return
 
     # Benchmarks to evaluate
-    benchmarks = {
-        "ClaimBuster": load_claimbuster,
+    all_benchmarks = {
+        "CB_crowdsourced": load_claimbuster_crowdsourced,
+        "CB_groundtruth": load_claimbuster_groundtruth,
+        "CT21": load_ct21,
         "CT22": load_ct22,
         "CT23": load_ct23,
         "CT24": load_ct24,
     }
+
+    # Filter benchmarks if specified
+    if args.benchmarks:
+        benchmarks = {k: v for k, v in all_benchmarks.items() if k in args.benchmarks}
+        if not benchmarks:
+            print(f"❌ No valid benchmarks found. Available: {list(all_benchmarks.keys())}")
+            return
+    else:
+        benchmarks = all_benchmarks
 
     results = {}
 
@@ -321,12 +431,25 @@ def main():
             results[bench_name] = result
 
             # Print results
-            print(f"\n   📊 Results:")
+            print(f"\n   📊 Classification Results:")
             print(f"      F1:        {result['f1']:.4f}")
             print(f"      Precision: {result['precision']:.4f}")
             print(f"      Recall:    {result['recall']:.4f}")
             print(f"      Accuracy:  {result['accuracy']:.4f}")
             print(f"      Threshold: {result['threshold']:.2f}")
+
+            # Compute ranking metrics for CT21 (official metric was MAP)
+            if bench_name == "CT21":
+                ranking = compute_ranking_metrics(probs, labels)
+                result.update(ranking)
+                print(f"\n   📊 Ranking Results (official CT21 metric):")
+                print(f"      MAP:       {ranking['MAP']:.4f}  (SOTA: 0.224)")
+                print(f"      MRR:       {ranking['MRR']:.4f}")
+                print(f"      P@1:       {ranking['P@1']:.4f}")
+                print(f"      P@5:       {ranking['P@5']:.4f}")
+                print(f"      P@10:      {ranking['P@10']:.4f}")
+                print(f"      P@20:      {ranking['P@20']:.4f}")
+                print(f"      P@30:      {ranking['P@30']:.4f}")
 
             # Compare to SOTA
             if bench_name in SOTA_RESULTS:

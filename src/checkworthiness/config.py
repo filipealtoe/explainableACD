@@ -384,6 +384,33 @@ MODELS: dict[str, ModelConfig] = {
         cost_per_1m_input=0.06,
         cost_per_1m_output=0.06,
     ),
+    # --- Llama 4 Models (Aug 2024 cutoff) ---
+    "llama-4-scout": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="meta-llama/Llama-4-Scout-17B-16E-Instruct",  # 17B x 16 experts MoE
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=0.18,
+        cost_per_1m_output=0.59,
+    ),
+    "llama-4-maverick": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",  # 17B x 128 experts MoE
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=0.27,
+        cost_per_1m_output=0.85,
+    ),
     # --- Mistral Models ---
     # Note: Mistral instruction models don't reliably follow assistant prefill
     "mistral-7b": ModelConfig(
@@ -414,9 +441,6 @@ MODELS: dict[str, ModelConfig] = {
         cost_per_1m_input=0.60,
         cost_per_1m_output=0.60,
     ),
-    # --- Gemma Models ---
-    # NOTE: gemma-3n (cutoff June 2024) excluded due to data contamination risk
-    # CT24 dataset released January 2024 - model may have seen test data
     # --- Qwen Models ---
     "qwen-2.5-7b": ModelConfig(
         provider=ModelProvider.TOGETHER_AI,
@@ -457,6 +481,33 @@ MODELS: dict[str, ModelConfig] = {
         cost_per_1m_input=1.20,
         cost_per_1m_output=1.20,
     ),
+    # --- Qwen 3 Models ---
+    "qwen3-235b": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="Qwen/Qwen3-235B-A22B-Instruct-2507-tput",  # 235B MoE, A22B active
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=0.20,
+        cost_per_1m_output=0.60,
+    ),
+    "qwen3-80b": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="Qwen/Qwen3-Next-80B-A3B-Instruct",  # 80B MoE, A3B active
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=0.15,
+        cost_per_1m_output=1.50,
+    ),
     # --- DeepSeek Models via Together AI ---
     "deepseek-v3": ModelConfig(
         provider=ModelProvider.TOGETHER_AI,
@@ -470,6 +521,61 @@ MODELS: dict[str, ModelConfig] = {
         is_thinking_model=False,
         cost_per_1m_input=1.25,
         cost_per_1m_output=1.25,
+    ),
+    "deepseek-v3.1": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="deepseek-ai/DeepSeek-V3.1",  # Latest DeepSeek V3
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=1.25,
+        cost_per_1m_output=1.25,
+    ),
+    # --- Gemma Models ---
+    "gemma-3n": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="google/gemma-3n-E4B-it",  # Gemma 3N, June 2024 cutoff
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=0.02,
+        cost_per_1m_output=0.04,
+    ),
+    # --- Nvidia Models ---
+    "nemotron-nano-9b": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="nvidia/NVIDIA-Nemotron-Nano-9B-v2",  # Nemotron Nano 9B
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=0.06,
+        cost_per_1m_output=0.25,
+    ),
+    # --- Moonshot/Kimi Models via Together AI ---
+    "kimi-k2-together": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="moonshotai/Kimi-K2-Instruct-0905",  # Kimi K2 via Together
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=0.55,
+        cost_per_1m_output=2.40,
     ),
     # --- Additional Llama Models ---
     "llama-3.1-405b": ModelConfig(
@@ -526,6 +632,20 @@ MODELS: dict[str, ModelConfig] = {
         supports_prefill=False,
         cost_per_1m_input=0.80,
         cost_per_1m_output=0.80,
+    ),
+    "ministral-14b": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="mistralai/Ministral-3-14B-Instruct-2512",  # Ministral 14B
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        supports_prefill=False,
+        cost_per_1m_input=0.07,
+        cost_per_1m_output=0.07,
     ),
 }
 

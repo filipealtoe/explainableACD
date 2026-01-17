@@ -20,6 +20,7 @@ Usage:
 """
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,6 +36,87 @@ if TYPE_CHECKING:
     from src.pipeline.modules.embedder import Embedder
 
 logger = logging.getLogger(__name__)
+
+# Lazy import for YAKE keyword extractor
+_yake_extractor = None
+
+
+def _get_yake_extractor(
+    language: str = "en",
+    max_ngram_size: int = 2,
+    deduplication_threshold: float = 0.9,
+    num_keywords: int = 10,
+):
+    """
+    Get or create YAKE keyword extractor (lazy initialization).
+
+    YAKE (Yet Another Keyword Extractor) is unsupervised and doesn't need
+    a pre-trained corpus, making it ideal for streaming applications.
+    """
+    global _yake_extractor
+    if _yake_extractor is None:
+        try:
+            import yake
+            _yake_extractor = yake.KeywordExtractor(
+                lan=language,
+                n=max_ngram_size,
+                dedupLim=deduplication_threshold,
+                top=num_keywords,
+                features=None,  # Use default features
+            )
+        except ImportError:
+            logger.warning("YAKE not installed. Install with: pip install yake")
+            return None
+    return _yake_extractor
+
+
+def extract_keywords(
+    texts: list[str],
+    max_keywords: int = 10,
+    min_keyword_length: int = 3,
+) -> list[str]:
+    """
+    Extract keywords from a list of texts using YAKE.
+
+    Args:
+        texts: List of text strings (e.g., tweets from a cluster)
+        max_keywords: Maximum number of keywords to return
+        min_keyword_length: Minimum length of keywords
+
+    Returns:
+        List of keywords, sorted by relevance (most relevant first)
+    """
+    extractor = _get_yake_extractor(num_keywords=max_keywords * 2)  # Extract more, then filter
+    if extractor is None:
+        return []
+
+    # Combine texts into a single document
+    combined = " ".join(texts)
+
+    # Clean text: remove URLs, mentions, excess whitespace
+    combined = re.sub(r"https?://\S+", "", combined)
+    combined = re.sub(r"@\w+", "", combined)
+    combined = re.sub(r"#", "", combined)  # Keep hashtag words
+    combined = re.sub(r"\s+", " ", combined).strip()
+
+    if not combined or len(combined) < 20:
+        return []
+
+    try:
+        # YAKE returns list of (keyword, score) tuples, lower score = more relevant
+        keywords = extractor.extract_keywords(combined)
+
+        # Filter by length and return just the keywords
+        filtered = [
+            kw for kw, score in keywords
+            if len(kw) >= min_keyword_length
+            and kw.lower() not in {"user", "https", "http", "the", "and", "for", "that", "this", "with"}
+        ]
+
+        return filtered[:max_keywords]
+    except Exception as e:
+        logger.debug(f"Keyword extraction failed: {e}")
+        return []
 
 
 @dataclass
@@ -191,6 +273,7 @@ class ClaimRegistry:
             # Update the existing claim
             existing_claim = self.claims[similar_claim_id]
             existing_claim.cluster_ids.append(cluster_id)
+            existing_claim.total_clusters = len(existing_claim.cluster_ids)
             if timestamp and (existing_claim.last_seen is None or timestamp > existing_claim.last_seen):
                 existing_claim.last_seen = timestamp
 
@@ -201,17 +284,24 @@ class ClaimRegistry:
         claim_id = str(uuid.uuid4())
         self._new_claims += 1
 
+        # Extract keywords from cluster tweets
+        keywords = extract_keywords(tweets, max_keywords=10)
+
         self.claims[claim_id] = ClaimInfo(
             claim_id=claim_id,
             claim_text=claim_text,
             first_seen=timestamp or datetime.now(),
             cluster_ids=[cluster_id],
+            total_clusters=1,
+            keywords=keywords,
         )
 
         self.cluster_to_claim[cluster_id] = claim_id
         self._add_claim_embedding(claim_id, claim_embedding)
 
         logger.debug(f"Created new claim {claim_id[:8]} for cluster {cluster_id}: {claim_text[:50]}...")
+        if keywords:
+            logger.debug(f"  Keywords: {', '.join(keywords[:5])}")
         return claim_id
 
     def update_claim_stats(
@@ -265,6 +355,8 @@ class ClaimRegistry:
         claim_id: str,
         z_score: float,
         kleinberg_state: int,
+        trigger_type: str | None = None,
+        trigger_cluster_id: int | None = None,
     ) -> None:
         """
         Set detection statistics for a claim (only on first detection).
@@ -276,6 +368,8 @@ class ClaimRegistry:
             claim_id: Claim to update
             z_score: Composite Z-score at detection
             kleinberg_state: Kleinberg state (0=normal, 1=elevated, 2=burst)
+            trigger_type: What triggered detection ("zscore", "kleinberg", "both")
+            trigger_cluster_id: Which cluster triggered first detection
         """
         if claim_id not in self.claims:
             logger.warning(f"Claim {claim_id} not found in registry")
@@ -287,6 +381,10 @@ class ClaimRegistry:
             claim.detection_z_score = z_score
         if claim.kleinberg_state is None:
             claim.kleinberg_state = kleinberg_state
+        if claim.trigger_type is None and trigger_type is not None:
+            claim.trigger_type = trigger_type
+        if claim.trigger_cluster_id is None and trigger_cluster_id is not None:
+            claim.trigger_cluster_id = trigger_cluster_id
 
     def get_claim(self, claim_id: str) -> ClaimInfo | None:
         """Get claim info by ID."""

@@ -15,10 +15,14 @@ Usage:
     # Resume from checkpoint:
     python experiments/scripts/run_streaming_claim_detection.py --resume data/pipeline_output/streaming
 
-Output:
-    - data/pipeline_output/streaming/claims.parquet
-    - data/pipeline_output/streaming/claim_timeseries.parquet
-    - data/pipeline_output/streaming/summary.json
+Output (normalized schema):
+    - users.parquet: Unique users with authority metrics
+    - tweets.parquet: All tweets with FKs to users/clusters
+    - claims.parquet: Normalized claims (deduplicated)
+    - clusters.parquet: Cluster metadata with FK to claims
+    - cluster_timeseries.parquet: Temporal evolution per cluster
+    - cluster_embeddings.npy: Centroid embeddings
+    - summary.json: Pipeline statistics
 
 Reference: See /Users/sergiopinto/.claude/plans/snug-tickling-melody.md for architecture details.
 """
@@ -107,8 +111,12 @@ async def run_pipeline(
     simulator_config = config.get("simulator", {})
     output_config = config.get("output", {})
 
-    output_dir = Path(output_config.get("output_dir", "data/pipeline_output/streaming"))
+    # Create timestamped output directory to avoid overwriting previous runs
+    base_output_dir = output_config.get("output_dir", "data/pipeline_output/streaming")
+    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    output_dir = Path(base_output_dir) / run_timestamp
     output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Output directory: {output_dir}")
 
     # Initialize simulator
     logger.info("Initializing streaming simulator...")
@@ -228,8 +236,12 @@ async def run_pipeline(
 
     logger.info("=" * 70)
     logger.info(f"Outputs saved to: {output_dir}")
+    logger.info("  - users.parquet")
+    logger.info("  - tweets.parquet")
     logger.info("  - claims.parquet")
-    logger.info("  - claim_timeseries.parquet")
+    logger.info("  - clusters.parquet")
+    logger.info("  - cluster_timeseries.parquet")
+    logger.info("  - cluster_embeddings.npy")
     logger.info("  - summary.json")
     logger.info("=" * 70)
 

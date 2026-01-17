@@ -34,8 +34,8 @@ from sklearn.metrics import (
 from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, DebertaV2Tokenizer
 
-# Paths
-MODEL_PATH = Path(__file__).parent.parent / "results" / "deberta_checkworthy" / "deberta-v3-large" / "best_model"
+# Paths (defaults, can be overridden via CLI)
+DEFAULT_MODEL_PATH = Path(__file__).parent.parent / "results" / "deberta_checkworthy" / "deberta-v3-large" / "best_model"
 DATA_DIR = Path(__file__).parent.parent.parent / "data" / "raw" / "claim_buster"
 OUTPUT_DIR = Path(__file__).parent.parent / "results" / "claimbuster_eval"
 
@@ -193,12 +193,16 @@ def print_results(
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate DeBERTa on ClaimBuster")
+    parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH,
+                        help="Path to fine-tuned DeBERTa model directory")
     parser.add_argument("--threshold", type=float, default=0.5, help="Classification threshold")
     parser.add_argument("--auto-threshold", action="store_true", help="Automatically find optimal threshold")
     parser.add_argument("--optimize-metric", type=str, default="f1", choices=["f1", "f2", "youden"],
                         help="Metric to optimize when using --auto-threshold")
     parser.add_argument("--save", action="store_true", help="Save predictions to CSV")
     args = parser.parse_args()
+
+    model_path = args.model_path
 
     # Device
     device = torch.device(
@@ -207,12 +211,12 @@ def main():
         else "cpu"
     )
     print(f"Device: {device}")
-    print(f"Model: {MODEL_PATH}")
+    print(f"Model: {model_path}")
 
     # Load model
     print("\nLoading model...")
-    tokenizer = DebertaV2Tokenizer.from_pretrained(MODEL_PATH)
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH).to(device).eval()
+    tokenizer = DebertaV2Tokenizer.from_pretrained(model_path)
+    model = AutoModelForSequenceClassification.from_pretrained(model_path).to(device).eval()
 
     # Create output directory
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

@@ -29,23 +29,55 @@ simulator:
 # CLAIM GATE (Linguistic Pre-Filter)
 # =============================================================================
 # Filters tweets before expensive processing to reduce noise.
-# Expected pass rate: 50-70%
+# Relaxed settings (2026-01-16) to capture more claims for virality detection.
+# Expected pass rate: 60-80%
 claim_gate:
   enabled: true
-  min_words: 5
-  max_words: 100
-  filter_questions: true
-  filter_reactions: true
-  require_verb: true
-  filter_retweets: true
+  min_words: 4  # Short claims exist: "Biden won Georgia"
+  max_words: 150  # Thread-style tweets can contain claims
+  filter_questions: false  # Questions embed claims: "Did you know Trump said X?"
+  filter_reactions: true  # Keep filtering - reactions are pure noise
+  require_verb: false  # Noun phrases can be claims: "Biden's $2T tax plan"
+  filter_retweets: false  # Don't filter - RTs show amplification/virality
+
+# =============================================================================
+# TEXT PREPROCESSOR (Embedding Quality)
+# =============================================================================
+# Cleans tweet text for better embedding/clustering while preserving raw text.
+# Creates: tweet_clean (for embedding), preserves: tweet (for LLM normalization)
+text_preprocessor:
+  enabled: true
+  input_column: "tweet"
+  output_column: "tweet_clean"
+  remove_urls: true
+  normalize_mentions: true  # @user → @USER
+  remove_hashtag_symbol: true  # #Biden → Biden
+  clean_repeated_chars: true  # loooove → loove
+  fix_encoding: true  # ftfy for mojibake
+  expand_contractions: true  # can't → cannot
+  remove_emojis: true  # Better for embeddings
+  extract_features: true  # mention_count, is_manual_retweet, etc.
+  extract_sentiment: true  # VADER sentiment (compound, pos, neg, neu)
+  detect_language: true  # ISO 639-1 language code
+  filter_non_english: false  # Keep all languages, just detect for features
+
+# =============================================================================
+# DATA INGESTION (Schema Coercion)
+# =============================================================================
+# Fixes data quality issues at ingestion time (before any filtering).
+data_ingestion:
+  enabled: true
+  id_columns: ["tweet_id", "user_id"]
+  date_columns: ["user_join_date"]
 
 # =============================================================================
 # EMBEDDER (Sentence Transformers)
 # =============================================================================
 embedder:
   enabled: true
-  model_name: "all-mpnet-base-v2"  # 768-dim, best quality
-  # Alternative: "all-MiniLM-L6-v2" (384-dim, faster)
+  model_name: "paraphrase-multilingual-mpnet-base-v2"  # 768-dim, 50+ languages
+  # Alternative: "all-mpnet-base-v2" (English-only, slightly better for English)
+  # Alternative: "all-MiniLM-L6-v2" (384-dim, faster, English-only)
   batch_size: 64
   device: "mps"  # Options: "cpu", "cuda", "mps"
   normalize: true
