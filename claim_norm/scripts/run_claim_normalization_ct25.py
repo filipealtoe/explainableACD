@@ -1609,6 +1609,116 @@ def load_data(split: str, filtered: bool = False, single_claim: bool = False) ->
     return df
 
 
+def load_pipeline_data(pipeline_dir: Path, top_k: int = 5) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Load claims and their source tweets from streaming pipeline output.
+
+    Args:
+        pipeline_dir: Path to pipeline output directory containing claims.parquet and tweets.parquet
+        top_k: Number of representative tweets per cluster (sorted by cluster_similarity desc)
+
+    Returns:
+        claims_df: Original claims DataFrame (for updating later)
+        tweets_df: DataFrame with columns matching CT25 format:
+            - idx: row index
+            - claim_id: FK to claims
+            - post: concatenated top-K tweet texts (\\n\\n separated)
+            - gold_claim: None (no ground truth)
+
+    Raises:
+        FileNotFoundError: If required files are missing
+        ValueError: If no claims found in claims.parquet
+    """
+    claims_path = pipeline_dir / "claims.parquet"
+    tweets_path = pipeline_dir / "tweets.parquet"
+
+    # Check required files exist
+    missing = []
+    if not claims_path.exists():
+        missing.append("claims.parquet")
+    if not tweets_path.exists():
+        missing.append("tweets.parquet")
+    if missing:
+        raise FileNotFoundError(
+            f"Missing required files in {pipeline_dir}: {', '.join(missing)}"
+        )
+
+    # Load data
+    claims_df = pl.read_parquet(claims_path)
+    tweets_df = pl.read_parquet(tweets_path)
+
+    if len(claims_df) == 0:
+        raise ValueError(f"No claims found in {claims_path}")
+
+    print(f"Loaded {len(claims_df)} claims, {len(tweets_df)} tweets from pipeline")
+
+    # Build mapping: claim_id -> list of cluster_ids
+    # ClaimInfo schema has cluster_ids as list[int]
+    rows = []
+    skipped = 0
+
+    for claim in claims_df.iter_rows(named=True):
+        claim_id = claim["claim_id"]
+        cluster_ids = claim.get("cluster_ids", [])
+
+        # Handle case where cluster_ids might be stored as string or be None
+        if cluster_ids is None:
+            cluster_ids = []
+        if isinstance(cluster_ids, str):
+            import json
+            try:
+                cluster_ids = json.loads(cluster_ids)
+            except json.JSONDecodeError:
+                cluster_ids = []
+
+        if not cluster_ids:
+            # Fallback: use trigger_cluster_id if available
+            trigger = claim.get("trigger_cluster_id")
+            if trigger is not None:
+                cluster_ids = [trigger]
+
+        if not cluster_ids:
+            skipped += 1
+            continue
+
+        # Get tweets for these clusters, sorted by similarity
+        cluster_tweets = tweets_df.filter(
+            pl.col("cluster_id").is_in(cluster_ids)
+        )
+
+        if len(cluster_tweets) == 0:
+            skipped += 1
+            continue
+
+        # Sort by cluster_similarity descending, take top K
+        if "cluster_similarity" in cluster_tweets.columns:
+            cluster_tweets = cluster_tweets.sort("cluster_similarity", descending=True)
+
+        top_tweets = cluster_tweets.head(top_k)
+
+        # Concatenate tweet texts
+        texts = top_tweets["text"].to_list()
+        combined_post = "\n\n".join(texts)
+
+        rows.append({
+            "claim_id": claim_id,
+            "post": combined_post,
+            "gold_claim": None,
+        })
+
+    if skipped > 0:
+        print(f"⚠️ Skipped {skipped} claims with no matching tweets")
+
+    if not rows:
+        raise ValueError("No claims with matching tweets found")
+
+    # Create DataFrame matching CT25 format
+    result_df = pl.DataFrame(rows).with_row_index("idx")
+
+    print(f"Prepared {len(result_df)} claims for normalization (top-{top_k} tweets each)")
+
+    return claims_df, result_df
+
+
 # =============================================================================
 # METEOR Score
 # =============================================================================
@@ -2543,6 +2653,15 @@ def main():
                         help="Single claim/post to normalize (instead of running on a dataset split). "
                              "Prints the normalized claim and exits.")
 
+    # Full pipeline mode (for streaming pipeline output)
+    parser.add_argument("--full-pipeline", action="store_true",
+                        help="Load data from streaming pipeline output instead of CT25 benchmark. "
+                             "Updates claims.parquet with normalized claim_text.")
+    parser.add_argument("--pipeline-dir", type=str, default=None,
+                        help="Path to pipeline output directory (required if --full-pipeline)")
+    parser.add_argument("--top-k", type=int, default=5,
+                        help="Number of representative tweets per cluster for normalization (default: 5)")
+
     args = parser.parse_args()
 
     # Handle --claim: single claim inference mode
@@ -2684,15 +2803,55 @@ def main():
     # Resolve local model shortcut
     local_model = LOCAL_MODELS.get(args.local_model, args.local_model)
 
-    # Load data
-    df = load_data(args.split, single_claim=args.single_claim)
-    if args.single_claim:
-        print(f"Using SINGLE-CLAIM filtered dataset")
-    if args.limit:
-        df = df.head(args.limit)
+    # Track pipeline mode for output handling
+    pipeline_mode = False
+    pipeline_path = None
+    original_claims_df = None
 
-    samples = df.to_dicts()
-    print(f"\nLoaded {len(samples)} samples from {args.split} split")
+    # Handle --full-pipeline: load from streaming pipeline output
+    if args.full_pipeline:
+        if not args.pipeline_dir:
+            parser.error("--pipeline-dir is required when using --full-pipeline")
+        pipeline_path = Path(args.pipeline_dir)
+        if not pipeline_path.exists():
+            parser.error(f"Pipeline directory not found: {pipeline_path}")
+
+        print("\n" + "=" * 60)
+        print("FULL PIPELINE MODE")
+        print(f"Loading from: {pipeline_path}")
+        print("=" * 60 + "\n")
+
+        try:
+            original_claims_df, df = load_pipeline_data(pipeline_path, top_k=args.top_k)
+            pipeline_mode = True
+        except (FileNotFoundError, ValueError) as e:
+            print(f"❌ Error loading pipeline data: {e}")
+            sys.exit(1)
+
+        if args.limit:
+            df = df.head(args.limit)
+
+        samples = df.to_dicts()
+        print(f"Processing {len(samples)} claims from pipeline output")
+
+        # Auto-discover contrastive file in pipeline mode
+        if args.contrastive_file is None:
+            auto_contrastive_path = RESULTS_DIR / f"{args.model}_train.jsonl"
+            if auto_contrastive_path.exists():
+                args.contrastive_file = str(auto_contrastive_path)
+                print(f"✓ Auto-discovered contrastive file: {auto_contrastive_path.name}")
+            else:
+                print(f"ℹ No contrastive file found at {auto_contrastive_path.name} - proceeding without contrastive learning")
+    else:
+        # Standard CT25 benchmark mode
+        df = load_data(args.split, single_claim=args.single_claim)
+        if args.single_claim:
+            print(f"Using SINGLE-CLAIM filtered dataset")
+        if args.limit:
+            df = df.head(args.limit)
+
+        samples = df.to_dicts()
+        print(f"\nLoaded {len(samples)} samples from {args.split} split")
 
     # Load cluster mapping if cluster-aware prompting is enabled
     cluster_mapping = None
@@ -2808,6 +2967,40 @@ def main():
             print_results(local_model, stats)
             save_model_results(model_short, stats, args.split, RESULTS_DIR)
 
+            # === PIPELINE MODE: Update claims.parquet with normalized claims ===
+            if pipeline_mode and original_claims_df is not None and pipeline_path is not None:
+                print("\n" + "=" * 60)
+                print("UPDATING CLAIMS.PARQUET")
+                print("=" * 60)
+
+                claim_text_map = {}
+                for result in results:
+                    if result.predicted_claim:
+                        sample_idx = result.idx
+                        if sample_idx < len(samples):
+                            claim_id = samples[sample_idx].get("claim_id")
+                            if claim_id:
+                                claim_text_map[claim_id] = result.predicted_claim
+
+                if claim_text_map:
+                    updated_claims_df = original_claims_df.with_columns(
+                        pl.when(pl.col("claim_id").is_in(list(claim_text_map.keys())))
+                        .then(
+                            pl.col("claim_id").replace_strict(
+                                claim_text_map,
+                                default=pl.col("claim_text")
+                            )
+                        )
+                        .otherwise(pl.col("claim_text"))
+                        .alias("claim_text")
+                    )
+                    output_path = pipeline_path / "claims.parquet"
+                    updated_claims_df.write_parquet(output_path)
+                    print(f"✓ Updated {len(claim_text_map)} claims in {output_path}")
+                    print(f"  (out of {len(original_claims_df)} total claims)")
+                else:
+                    print("⚠️ No claims were successfully normalized")
+
     # =========================================================================
     # API MODE
     # =========================================================================
@@ -2885,6 +3078,47 @@ def main():
             display_name = f"contrastive_{args.model}" if contrastive is not None else args.model
             print_results(display_name, stats)
             save_model_results(display_name, stats, args.split, RESULTS_DIR)
+
+        # === PIPELINE MODE: Update claims.parquet with normalized claims ===
+        if pipeline_mode and results and original_claims_df is not None and pipeline_path is not None:
+            print("\n" + "=" * 60)
+            print("UPDATING CLAIMS.PARQUET")
+            print("=" * 60)
+
+            # Build mapping: claim_id -> normalized claim text
+            # Results have idx which maps to samples, and samples have claim_id
+            claim_text_map = {}
+            for result in results:
+                if result.predicted_claim:
+                    # Get claim_id from the corresponding sample
+                    sample_idx = result.idx
+                    if sample_idx < len(samples):
+                        claim_id = samples[sample_idx].get("claim_id")
+                        if claim_id:
+                            claim_text_map[claim_id] = result.predicted_claim
+
+            if claim_text_map:
+                # Update claim_text column in original claims DataFrame
+                updated_claims_df = original_claims_df.with_columns(
+                    pl.when(pl.col("claim_id").is_in(list(claim_text_map.keys())))
+                    .then(
+                        pl.col("claim_id").replace_strict(
+                            claim_text_map,
+                            default=pl.col("claim_text")
+                        )
+                    )
+                    .otherwise(pl.col("claim_text"))
+                    .alias("claim_text")
+                )
+
+                # Write back to claims.parquet
+                output_path = pipeline_path / "claims.parquet"
+                updated_claims_df.write_parquet(output_path)
+
+                print(f"✓ Updated {len(claim_text_map)} claims in {output_path}")
+                print(f"  (out of {len(original_claims_df)} total claims)")
+            else:
+                print("⚠️ No claims were successfully normalized")
 
 
 if __name__ == "__main__":

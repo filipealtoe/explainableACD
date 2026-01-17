@@ -196,6 +196,35 @@ python scripts/run_claim_normalization_ct25.py \
     --contrastive-examples 2
 ```
 
+**Full pipeline mode (streaming pipeline data):**
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--full-pipeline` | flag | False | Load data from streaming pipeline output instead of CT25 benchmark |
+| `--pipeline-dir` | str | None | Path to pipeline output directory (required if `--full-pipeline`) |
+| `--top-k` | int | 5 | Number of representative tweets per cluster for normalization |
+
+Use `--full-pipeline` to normalize claims from streaming pipeline output (parquet files) instead of the CT25 benchmark CSVs. The script will:
+1. Load `claims.parquet` and `tweets.parquet` from `--pipeline-dir`
+2. Concatenate top-K tweets per cluster as input
+3. Auto-discover contrastive file (`{model}_train.jsonl`) if available
+4. Update `claims.parquet` with normalized `claim_text`
+
+Example:
+```bash
+python scripts/run_claim_normalization_ct25.py \
+    --model deepseek-v3.1 \
+    --full-pipeline \
+    --pipeline-dir data/pipeline_output \
+    --topic-clusters 0 \
+    --retrieval-threshold 0.85 \
+    --claim-verify-threshold 0.65 \
+    --num-examples 5 \
+    --contrastive-examples 2
+```
+
+> **Note:** Do not use `--auto-contrastive` with `--full-pipeline`. The contrastive file is auto-discovered in pipeline mode.
+
 **Local GPU inference:**
 
 | Argument | Type | Default | Description |
