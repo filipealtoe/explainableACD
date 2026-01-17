@@ -471,6 +471,19 @@ MODELS: dict[str, ModelConfig] = {
         cost_per_1m_input=1.25,
         cost_per_1m_output=1.25,
     ),
+    "deepseek-v3.1": ModelConfig(
+        provider=ModelProvider.TOGETHER_AI,
+        model_name="deepseek-ai/DeepSeek-V3.1",
+        api_key_env="TOGETHER_API_KEY",
+        api_base="https://api.together.xyz/v1",
+        max_tokens=2048,
+        supports_logprobs=True,
+        logprobs=True,
+        top_logprobs=5,
+        is_thinking_model=False,
+        cost_per_1m_input=0.90,
+        cost_per_1m_output=0.90,
+    ),
     # --- Additional Llama Models ---
     "llama-3.1-405b": ModelConfig(
         provider=ModelProvider.TOGETHER_AI,
