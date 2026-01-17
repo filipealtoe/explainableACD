@@ -74,9 +74,8 @@ At the end of EVERY response (after completing the task):
 
 **When context reaches ~70% usage (30% free):**
 1. STOP the current task immediately
-2. **UPDATE the "Session Trajectory" section** in this CLAUDE.md file with current state
-3. Generate a **SESSION HANDOFF** block for the user
-4. Tell user to run `/clear` and paste the handoff
+2. Generate a **SESSION HANDOFF** block for the user
+3. Tell user to run `/clear` and paste the handoff
 
 **SESSION HANDOFF format:**
 ```
@@ -168,79 +167,6 @@ explainableACD/
 
 ---
 
-## Checkworthiness System (Current Focus)
-
-The checkworthiness assessment uses three parallel modules that score claims on 0-100% confidence:
-
-### Three Assessment Dimensions
-
-1. **Checkability**: Is this a factual claim (not opinion/prediction/vague)?
-2. **Verifiability**: Can this be verified with public data and reputable sources?
-3. **Harm Potential**: Could this cause societal harm if spread?
-   - Sub-scores: social_fragmentation, spurs_action, believability, exploitativeness
-
-### Final Decision Formula
-```python
-average_confidence = (checkability + verifiability + harm_potential) / 3
-prediction = "Yes" if average_confidence > threshold else "No"  # threshold=50.0
-```
-
-### Three Implementation Baselines
-
-| Baseline | Description | File |
-|----------|-------------|------|
-| **Prompting Baseline** | Direct OpenAI API calls with hand-crafted prompts | `src/checkworthiness/prompting_baseline.py` |
-| **DSPy Baseline** | Structured DSPy signatures with TypedPredictor | `src/checkworthiness/modules.py` |
-| **DSPy + GEPA** | DSPy with prompt optimization via GEPA | `modules.py` + optimizer |
-
-### Model Configuration
-
-Supported providers in `src/checkworthiness/config.py`:
-- **OpenAI**: gpt-4o, gpt-4.1-mini
-- **DeepSeek**: deepseek-v3.2 (reasoning model)
-- **xAI**: grok-4.1
-- **Moonshot**: kimi-k2 (reasoning model)
-
-Each config tracks: API keys, base URLs, token costs, logprobs support, reasoning model flags.
-
----
-
-## Data Pipeline
-
-### Datasets
-- **Corona Tweets**: COVID-19 related tweets (2020)
-- **Russian Trolls**: IRA tweets for disinformation study
-- **US Elections**: 2020 election tweets (Trump/Biden hashtags)
-- **CT24**: ClaimBuster checkworthiness benchmark (train/dev/test splits)
-
-### Cleaning Pipeline
-9-phase cleaning in `experiments/scripts/clean_dataset_phase*.py` (dedup → language detection → normalization → quality filtering → export).
-
----
-
-## Development Commands
-
-```bash
-# Install dependencies
-uv sync
-uv sync --extra dev
-
-# Code quality
-ruff check .
-mypy src/
-
-# Run experiments
-python experiments/scripts/run_streaming_bertopic.py
-
-# View MLflow UI
-mlflow ui --backend-store-uri sqlite:///mlflow.db --default-artifact-root mlruns
-
-# Interactive notebooks
-marimo edit notebooks/explore_topics.py
-```
-
----
-
 ## Environment Variables
 
 Required in `.env`:
@@ -250,75 +176,6 @@ DEEPSEEK_API_KEY=sk-...
 XAI_API_KEY=xai-...
 MOONSHOT_API_KEY=sk-...
 ```
-
----
-
-## 📍 Session Trajectory (Updated by Claude before handoff)
-
-**Last updated:** 2026-01-08
-
-### Model Comparison Complete ✅
-
-**Selected Models:**
-- **Primary**: qwen-2.5-72b (Test F1=0.689, best performer)
-- **Secondary**: mistral-small-24b (Test F1=0.677)
-- **Baseline**: gpt-4o-mini (Test F1=0.607, cost-efficient)
-
-**Test Set Rankings (341 samples):**
-| Model | Test F1 | Dev F1 | Δ F1 |
-|-------|---------|--------|------|
-| qwen-2.5-72b | 0.689 | 0.836 | -0.147 |
-| mistral-small-24b | 0.677 | 0.822 | -0.145 |
-| llama-3.1-70b | 0.635 | 0.813 | -0.178 |
-| gpt-4o-mini | 0.607 | 0.790 | -0.183 |
-| gpt-3.5-turbo | 0.603 | 0.780 | -0.177 |
-| mixtral-8x7b | 0.585 | 0.837 | -0.252 ❌ |
-
-**Key Finding**: mixtral-8x7b collapsed on test (-0.252 F1 drop) despite best dev performance. Always validate on test set.
-
-### High-Lift Predictive Features Discovered
-
-**POSITIVE lift (checkworthy indicators):**
-- has_percentage: 3.75x lift
-- voted_for_against: 3.37x
-- has_dollar: 3.34x
-- has_million_billion: 3.24x
-- has_numbers: 2.80x
-
-**NEGATIVE lift (non-checkworthy indicators):**
-- is_question: 0.18x (5.5x lower)
-- i_believe: 0.37x (2.7x lower)
-- i_think: 0.41x (2.4x lower)
-
-### Data Quality Issues Found in CT24 Train
-
-- 6 corrupted entries (#NAME?)
-- 55 encoding issues (Ã, â€)
-- 98 exact duplicates
-- 1,724 short fragments (≤8 words, no verb)
-
-### Short-Term Focus (This Week)
-1. Generate confidence features with qwen-2.5-72b on train/dev/test (~$53 estimated)
-2. Create text + NLP feature extraction script (free features with high lift)
-3. Implement data pruning (CheckThat! winner's approach: informative filter + CNN undersampling)
-
-### Medium-Term Goals
-- Update `generate_confidence_features.py` to save: entropy, ternary probs, cross-module disagreement, full model response
-- Test DSPy + GEPA optimization
-- Consider LoRA fine-tuning if prompting plateau
-
-### Recent Decisions
-- **qwen-2.5-72b as primary model**: Best test F1, stable dev→test performance
-- **Logprob-derived confidence over self-reported**: Using `p_true * 100` from token probabilities
-- **Text features first**: High-lift patterns (numbers, percentages, questions) are free features
-- **ECE less critical**: Journalists see reasoning, not confidence numbers
-
-### Blockers / Open Questions
-- None currently — ready to proceed with feature generation
-
-### Files Modified This Session
-- `experiments/scripts/compare_models_ct24.py` — Added --no-resume, --parallel, --rate-limit, --split flags, RateLimiter class, async execution, infer_schema_length fix
-- `src/checkworthiness/config.py` — Added 6 new Together AI models (qwen-2.5-7b/72b, llama-3.1-405b, llama-3-8b-lite, mistral-7b-v0.3, mistral-small-24b)
 
 ---
 
@@ -346,6 +203,8 @@ Custom skills in `.claude/skills/`:
 
 ## Important Rules
 
+- **ALWAYS ask for session name first** — At the very start of every new session, before doing anything else, ask the user: "What would you like to name this session?" Once the user provides a name, you MUST immediately execute `/rename <user-provided-name>_<YYYY-MM-DD>` (using today's date) to set the session name. Only after renaming is complete should you proceed with the user's actual task. This applies regardless of what task the user initially requests.
+
 - **NEVER run Python scripts without explicit user permission** — Always provide the command for the user to run themselves. Only execute when the user explicitly says "run it" or similar.
 
 - **NEVER add self-references in commits** — Do not include any mention of Claude, AI assistance, or co-authorship in commit messages. This includes:
@@ -358,7 +217,9 @@ Custom skills in `.claude/skills/`:
 
 - **Document design approaches before implementation** — When implementing a design alternative or significant feature:
   1. Present a structured plan to the user for approval
-  2. Append the plan to `design-log/design_approaches_YYYY-MM-DD.md` (one file per day, ISO date format)
+  2. Append the plan to `design-log/design_approaches_YYYY-MM-DD_<developer>.md` (one file per day per developer, ISO date format)
+     - **Developers:** Sérgio → `_Sergio.md`, Filipe → `_Filipe.md`
+     - **APPEND-ONLY:** Never delete or modify existing content in design-log files. Always add new entries at the bottom. Only edit/delete if the user explicitly requests it.
   3. Use this template:
 
   ```markdown
@@ -418,7 +279,7 @@ Custom skills in `.claude/skills/`:
   **How to find session info:** Session ID and slug are in the plan file path (e.g., `~/.claude/plans/[slug].md`) or transcript path (e.g., `~/.claude/projects/.../[session-id].jsonl`).
 
 - **Update design approach after implementation** — After completing implementation of a design approach:
-  1. Append an `## Implementation Summary` section to the corresponding entry in `design-log/design_approaches_YYYY-MM-DD.md`
+  1. Append an `## Implementation Summary` section to the corresponding entry in `design-log/design_approaches_YYYY-MM-DD_<developer>.md`
   2. Include:
      - Implementation summary table (step, location, what was added)
      - Any deviations from the original plan
@@ -522,8 +383,7 @@ After 6 months of daily use, I should:
 ## Conventions
 
 - **Python 3.13+** with strict mypy
+- **uv** for package management
 - **Polars** for dataframes (not pandas)
 - **Parquet** for data storage
-- **MLflow** for experiment tracking
-- **Marimo** for interactive notebooks
 - **Ruff** for linting (120 char line length)
