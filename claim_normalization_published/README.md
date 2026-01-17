@@ -173,6 +173,22 @@ python scripts/run_claim_normalization_ct25.py \
 | `--contrastive-file` | str | None | Path to contrastive examples JSONL |
 | `--contrastive-examples` | int | 1 | Number of contrastive pairs per query |
 | `--contrastive-mode` | str | `similar` | Selection mode: `similar` or `random` |
+| `--auto-contrastive` | flag | False | Automatically run two-stage contrastive learning |
+
+The `--auto-contrastive` flag automates the two-stage contrastive learning process:
+1. Checks if baseline results exist at `results/{model}_{split}.jsonl`
+2. If not, runs a baseline pass first (without contrastive examples)
+3. Then runs the contrastive pass using the baseline results
+
+Example:
+```bash
+# Single command runs both stages automatically
+python scripts/run_claim_normalization_ct25.py \
+    --model mistral-7b-v0.3 \
+    --split dev \
+    --auto-contrastive \
+    --contrastive-examples 2
+```
 
 **Local GPU inference:**
 

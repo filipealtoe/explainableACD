@@ -2527,8 +2527,74 @@ def main():
                         choices=["similar", "random"],
                         help="How to select bad examples: 'similar' (default) finds bad examples "
                              "similar to query post, 'random' picks randomly.")
+    parser.add_argument("--auto-contrastive", action="store_true",
+                        help="Automatically run two-stage contrastive learning: "
+                             "1) Run baseline if results don't exist, 2) Run contrastive using baseline results. "
+                             "Looks for {model}_{split}.jsonl in results directory.")
 
     args = parser.parse_args()
+
+    # Handle --auto-contrastive: automatically run two-stage contrastive learning
+    if args.auto_contrastive:
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        baseline_results_path = RESULTS_DIR / f"{args.model}_{args.split}.jsonl"
+
+        if not baseline_results_path.exists():
+            print("\n" + "=" * 60)
+            print("AUTO-CONTRASTIVE: Stage 1 - Running baseline (no contrastive)")
+            print("=" * 60)
+
+            # Build command for baseline run (without auto-contrastive to avoid recursion)
+            import subprocess
+            baseline_cmd = [
+                sys.executable, __file__,
+                "--model", args.model,
+                "--split", args.split,
+                "--parallel", str(args.parallel),
+                "--rate-limit", str(args.rate_limit),
+                "--timeout", str(args.timeout),
+                "--num-examples", str(args.num_examples),
+                "--retrieval-threshold", str(args.retrieval_threshold),
+                "--claim-verify-threshold", str(args.claim_verify_threshold),
+                "--retrieval-mode", args.retrieval_mode,
+                "--prompt-version", args.prompt_version,
+            ]
+            if args.limit:
+                baseline_cmd.extend(["--limit", str(args.limit)])
+            if args.topic_clusters > 0:
+                baseline_cmd.extend(["--topic-clusters", str(args.topic_clusters)])
+            if args.zero_shot:
+                baseline_cmd.append("--zero-shot")
+            if args.filtered_examples:
+                baseline_cmd.append("--filtered-examples")
+            if args.single_claim:
+                baseline_cmd.append("--single-claim")
+            if args.local:
+                baseline_cmd.extend(["--local", "--local-model", args.local_model, "--batch-size", str(args.batch_size)])
+            if args.no_resume:
+                baseline_cmd.append("--no-resume")
+
+            print(f"Command: {' '.join(baseline_cmd)}\n")
+            result = subprocess.run(baseline_cmd)
+
+            if result.returncode != 0:
+                print(f"\n❌ Baseline run failed with exit code {result.returncode}")
+                sys.exit(result.returncode)
+
+            if not baseline_results_path.exists():
+                print(f"\n❌ Baseline results not found at {baseline_results_path}")
+                print("   Check if the model name matches the output filename.")
+                sys.exit(1)
+        else:
+            print(f"\n✓ Found existing baseline results: {baseline_results_path.name}")
+
+        print("\n" + "=" * 60)
+        print("AUTO-CONTRASTIVE: Stage 2 - Running with contrastive examples")
+        print("=" * 60 + "\n")
+
+        # Set contrastive file to baseline results and proceed
+        args.contrastive_file = str(baseline_results_path)
+        args.auto_contrastive = False  # Prevent re-triggering
 
     # Override num_examples if zero-shot flag is set
     num_examples = 0 if args.zero_shot else args.num_examples
