@@ -104,7 +104,14 @@ for resource in ['punkt', 'punkt_tab', 'wordnet']:
 
 # Path setup - handle both full project and standalone script
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1] if SCRIPT_DIR.name == "scripts" else SCRIPT_DIR
+# For standalone package: scripts/ -> parent is package root
+# For full project: experiments/scripts/ -> parent.parent is project root
+if SCRIPT_DIR.name == "scripts" and SCRIPT_DIR.parent.name == "experiments":
+    REPO_ROOT = SCRIPT_DIR.parents[1]  # Full project structure
+elif SCRIPT_DIR.name == "scripts":
+    REPO_ROOT = SCRIPT_DIR.parent      # Standalone package
+else:
+    REPO_ROOT = SCRIPT_DIR
 
 # Try to load from project structure, fall back to standalone mode
 try:
@@ -257,6 +264,7 @@ except ImportError:
 # Data directory - check multiple possible locations
 _possible_data_dirs = [
     REPO_ROOT / "data" / "raw" / "check_that_25",  # Full project structure
+    REPO_ROOT / "data",                             # Standalone package structure
     SCRIPT_DIR / "data",                            # data/ next to script
     Path.cwd() / "data",                            # data/ in current directory
     Path.cwd(),                                     # Current directory (files directly here)
