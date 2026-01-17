@@ -2531,8 +2531,82 @@ def main():
                         help="Automatically run two-stage contrastive learning: "
                              "1) Run baseline if results don't exist, 2) Run contrastive using baseline results. "
                              "Looks for {model}_{split}.jsonl in results directory.")
+    parser.add_argument("--claim", type=str, default=None,
+                        help="Single claim/post to normalize (instead of running on a dataset split). "
+                             "Prints the normalized claim and exits.")
 
     args = parser.parse_args()
+
+    # Handle --claim: single claim inference mode
+    if args.claim:
+        async def run_single_claim():
+            """Run inference on a single claim and print result."""
+            import os
+
+            # Get model config
+            if args.model not in MODELS:
+                print(f"❌ Unknown model: {args.model}")
+                print(f"Available models: {list(MODELS.keys())}")
+                return
+
+            config = MODELS[args.model]
+            api_key = os.getenv(config.api_key_env)
+            if not api_key:
+                print(f"❌ Missing API key: {config.api_key_env}")
+                return
+
+            client = AsyncOpenAI(api_key=api_key, base_url=config.api_base)
+
+            # Initialize retriever for few-shot examples
+            retriever = None
+            num_examples = 0 if args.zero_shot else args.num_examples
+            if num_examples > 0:
+                try:
+                    train_df = load_data("train")
+                    retriever = ExampleRetriever.from_dataframe(train_df, n_clusters=args.topic_clusters)
+                    print(f"Loaded {len(retriever.posts)} training examples for few-shot")
+                except Exception as e:
+                    print(f"⚠️ Could not load training data for few-shot: {e}")
+                    print("   Running in zero-shot mode")
+                    num_examples = 0
+
+            # Create minimal semaphore and rate limiter
+            semaphore = asyncio.Semaphore(1)
+            rate_limiter = RateLimiter(requests_per_minute=600)
+
+            print(f"\n{'='*60}")
+            print(f"Model: {args.model}")
+            print(f"Input: {args.claim[:100]}{'...' if len(args.claim) > 100 else ''}")
+            print(f"{'='*60}\n")
+
+            result = await normalize_single(
+                client=client,
+                config=config,
+                idx=0,
+                post=args.claim,
+                gold_claim=None,
+                model_name=args.model,
+                semaphore=semaphore,
+                rate_limiter=rate_limiter,
+                retriever=retriever,
+                num_examples=num_examples,
+                timeout_seconds=args.timeout,
+                retrieval_threshold=args.retrieval_threshold,
+                claim_verify_threshold=args.claim_verify_threshold,
+                retrieval_mode=args.retrieval_mode,
+                system_prompt=PROMPT_VERSIONS[args.prompt_version],
+            )
+
+            print(f"Normalized claim: {result.predicted_claim}")
+            print(f"\nLatency: {result.latency_ms:.0f}ms")
+            if result.input_tokens > 0:
+                cost = (result.input_tokens * config.cost_per_1m_input +
+                        result.output_tokens * config.cost_per_1m_output) / 1_000_000
+                print(f"Tokens: {result.input_tokens} in / {result.output_tokens} out")
+                print(f"Cost: ${cost:.6f}")
+
+        asyncio.run(run_single_claim())
+        sys.exit(0)
 
     # Handle --auto-contrastive: automatically run two-stage contrastive learning
     if args.auto_contrastive:
