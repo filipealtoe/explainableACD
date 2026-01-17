@@ -64,7 +64,7 @@ OPENAI_API_KEY=your_openai_api_key  # Optional
 ## Directory Structure
 
 ```
-claim_normalization_published/
+claim_norm/
 ├── scripts/
 │   ├── run_claim_normalization_ct25.py   # Main inference script
 │   ├── tune_fewshot_hyperparams.py       # Hyperparameter tuning
@@ -102,6 +102,11 @@ python scripts/run_claim_normalization_ct25.py --model mistral-7b-v0.3 --split t
 
 # Zero-shot baseline (no examples)
 python scripts/run_claim_normalization_ct25.py --zero-shot --split dev
+
+# Single claim inference (no dataset needed)
+python scripts/run_claim_normalization_ct25.py \
+    --model mistral-7b-v0.3 \
+    --claim "Biden won the 2020 election with 81 million votes"
 ```
 
 #### Advanced Usage
@@ -141,6 +146,7 @@ python scripts/run_claim_normalization_ct25.py \
 |----------|------|---------|-------------|
 | `--model` | str | `mixtral-8x7b` | Model name (see `config.py` for options) |
 | `--split` | str | `dev` | Dataset split: `dev`, `test`, or `train` |
+| `--claim` | str | None | Single claim to normalize (skips dataset, prints result) |
 | `--limit` | int | None | Limit number of samples (for testing) |
 | `--parallel` | int | 10 | Number of parallel API requests |
 | `--rate-limit` | float | 600.0 | Max requests per minute |
