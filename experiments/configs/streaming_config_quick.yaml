@@ -60,22 +60,22 @@ anomaly:
 
 groq:
   enabled: true
-  model: "llama-3.1-8b-instant"
+  model: "deepseek-v3.2"  # Updated to available model
   max_tokens: 256
   temperature: 0.3
-  max_tweets_per_cluster: 5
+  max_tweets_per_cluster: 1  # Only use tweet closest to centroid
   rate_limit_rpm: 30
   timeout_seconds: 30.0
 
 registry:
   enabled: true
   dedup_threshold: 0.85
-  max_tweets_for_normalization: 5
+  max_tweets_for_normalization: 1  # Only use tweet closest to centroid
   min_cluster_size: 5  # Lower for quick validation
 
 virality:
   enabled: true
-  model_path: "model/virality_xgboost.pkl"
+  model_path: "model/virality_lightgbm_42.pkl"  # Updated to 42-feature LightGBM
   peek_hours: 6
   horizon_hours: 48  # Shorter horizon for quick feedback
   virality_threshold: 500  # Lower threshold

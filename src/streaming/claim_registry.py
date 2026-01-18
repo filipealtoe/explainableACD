@@ -14,7 +14,7 @@ Deduplication logic:
 - Otherwise, create a new claim entry
 
 Usage:
-    registry = ClaimRegistry(groq_adapter, embedder, dedup_threshold=0.85)
+    registry = ClaimRegistry(normalizer, embedder, dedup_threshold=0.85)
     claim_id = await registry.get_or_create_claim(cluster_id=5, tweets=["..."])
     registry.update_claim_stats(claim_id, timestamp, count=50, engagement=1000)
 """
@@ -32,7 +32,7 @@ import numpy as np
 from src.streaming.schemas import ClaimInfo
 
 if TYPE_CHECKING:
-    from src.pipeline.modules.claim_extractor import GroqAsyncAdapter
+    from src.streaming.llm_normalizer import LLMNormalizerAdapter
     from src.pipeline.modules.embedder import Embedder
 
 logger = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ class ClaimRegistry:
 
     def __init__(
         self,
-        groq_adapter: "GroqAsyncAdapter",
+        normalizer: "LLMNormalizerAdapter",
         embedder: "Embedder",
         config: ClaimRegistryConfig | None = None,
     ):
@@ -154,11 +154,11 @@ class ClaimRegistry:
         Initialize the claim registry.
 
         Args:
-            groq_adapter: Async Groq adapter for claim normalization
+            normalizer: LLM normalizer adapter for claim normalization
             embedder: Embedder for computing claim embeddings
             config: Configuration object
         """
-        self.groq = groq_adapter
+        self.normalizer = normalizer
         self.embedder = embedder
         self.config = config or ClaimRegistryConfig()
 
@@ -255,8 +255,8 @@ class ClaimRegistry:
             self.cluster_to_claim[cluster_id] = claim_id
             return claim_id
 
-        # Normalize via Groq
-        claim_text = await self.groq.normalize_claim(cluster_id, tweets)
+        # Normalize via LLM
+        claim_text = await self.normalizer.normalize_claim(cluster_id, tweets)
         self._normalizations += 1
 
         # Compute embedding for deduplication
@@ -456,7 +456,7 @@ class ClaimRegistry:
     def load(
         cls,
         output_dir: Path,
-        groq_adapter: "GroqAsyncAdapter",
+        normalizer: "LLMNormalizerAdapter",
         embedder: "Embedder",
         config: ClaimRegistryConfig | None = None,
     ) -> "ClaimRegistry":
@@ -465,7 +465,7 @@ class ClaimRegistry:
 
         Args:
             output_dir: Directory containing saved state
-            groq_adapter: Groq adapter for future normalizations
+            normalizer: LLM normalizer adapter for future normalizations
             embedder: Embedder for future embeddings
             config: Configuration
 
@@ -475,7 +475,7 @@ class ClaimRegistry:
         import json
 
         output_dir = Path(output_dir)
-        registry = cls(groq_adapter, embedder, config)
+        registry = cls(normalizer, embedder, config)
 
         # Load claims
         with open(output_dir / "claims.json") as f:

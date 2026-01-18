@@ -23,6 +23,8 @@ Target: reaches 1000+ RTs within 4h of detection (time-bounded definition)
 """
 
 import logging
+import warnings
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -30,38 +32,131 @@ from typing import Any
 
 import numpy as np
 import polars as pl
+from scipy.stats import skew
 
 from src.streaming.schemas import ViralityPrediction
+
+# Suppress sklearn feature names warning (harmless - numpy arrays don't have column names)
+warnings.filterwarnings("ignore", message="X does not have valid feature names")
 
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# HELPER FUNCTIONS FOR ENHANCED FEATURES
+# =============================================================================
+
+
+def compute_burstiness(timestamps: list) -> float:
+    """
+    Compute burstiness coefficient from inter-arrival times.
+
+    Burstiness B = (σ - μ) / (σ + μ) where σ=std, μ=mean of inter-arrival times.
+    B ∈ [-1, 1]: B=1 is maximally bursty, B=0 is Poisson, B=-1 is periodic.
+
+    Reference: Goh & Barabási, EPL 2008
+    """
+    if len(timestamps) < 3:
+        return 0.0
+
+    timestamps = sorted(timestamps)
+    inter_arrivals = np.diff([(t - timestamps[0]).total_seconds() for t in timestamps])
+
+    if len(inter_arrivals) < 2:
+        return 0.0
+
+    mu = np.mean(inter_arrivals)
+    sigma = np.std(inter_arrivals)
+
+    if mu + sigma == 0:
+        return 0.0
+
+    return float((sigma - mu) / (sigma + mu))
+
+
+def compute_gini(values: np.ndarray) -> float:
+    """
+    Compute Gini coefficient for concentration measurement.
+
+    Gini ∈ [0, 1]: 0 = perfect equality, 1 = maximum inequality.
+    Used for measuring engagement/user concentration.
+    """
+    if len(values) == 0 or np.sum(values) == 0:
+        return 0.0
+
+    values = np.sort(values)
+    n = len(values)
+    cumsum = np.cumsum(values)
+    return float((2 * np.sum((np.arange(1, n + 1) * values)) - (n + 1) * cumsum[-1]) / (n * cumsum[-1]))
+
+
 # Feature names in order (must match training)
+# Updated to 42 enhanced features for PSR prediction
 FEATURE_NAMES = [
-    # Basic (3)
-    "z_score_at_detection",
-    "tweet_count",
-    "engagement_sum",
-    # Velocity (3)
-    "tweets_per_hour",
+    # === BASIC AGGREGATES (5) ===
+    "cumulative_tweets",
+    "cumulative_engagement",
+    "windows_since_start",
+    "mean_tweets_per_window",
+    "mean_engagement_per_window",
+    # === GROWTH DYNAMICS (4) ===
+    "growth_rate",
+    "acceleration",
     "engagement_velocity",
-    "momentum",
-    # Engagement composition (3)
-    "rt_ratio",
-    "like_ratio",
-    "engagement_efficiency",
-    # Content (3)
-    "url_density",
-    "media_density",
-    "hashtag_avg",
-    # Temporal (2)
+    "engagement_jerk",
+    # === BURSTINESS (4) ===
+    "burstiness",
+    "inter_arrival_mean",
+    "inter_arrival_std",
+    "inter_arrival_cv",
+    # === EARLY SIGNALS (4) ===
+    "early_velocity_ratio",
+    "final_window_ratio",
+    "is_post_peak",
+    "peak_position_ratio",
+    # === USER AUTHORITY (3) ===
+    "max_followers_seen",
+    "avg_followers_seen",
+    "total_unique_users",
+    # === EFFICIENCY (2) ===
+    "engagement_per_follower",
+    "amplification_factor",
+    # === ANOMALY SIGNALS (5) ===
+    "z_score_at_detect",
+    "max_z_score_seen",
+    "z_score_count_at_detect",
+    "z_score_engagement_at_detect",
+    "kleinberg_state_at_detect",
+    # === GEOGRAPHIC (2) ===
+    "geographic_entropy_predetect",
+    "unique_countries_predetect",
+    # === TEMPORAL PATTERNS (5) ===
     "hour_of_day",
     "is_weekend",
-    # User authority (4) - from review synthesis
-    "avg_followers_first_50",
-    "max_followers_first_50",
-    "verified_ratio",
+    "is_morning",
+    "is_evening",
+    "posting_hour_entropy",
+    # === ENGAGEMENT DISTRIBUTION (5) ===
+    "max_retweets_per_tweet",
+    "avg_likes_per_tweet",
     "rt_like_ratio",
+    "engagement_skewness",
+    "engagement_gini",
+    # === USER CONCENTRATION (2) ===
+    "user_gini",
+    "top_user_ratio",
+    # === ACCOUNT AGE (1) ===
+    "account_age_avg_days",
+]
+
+# Legacy 18-feature names for backward compatibility
+LEGACY_FEATURE_NAMES = [
+    "z_score_at_detection", "tweet_count", "engagement_sum",
+    "tweets_per_hour", "engagement_velocity", "momentum",
+    "rt_ratio", "like_ratio", "engagement_efficiency",
+    "url_density", "media_density", "hashtag_avg",
+    "hour_of_day", "is_weekend",
+    "avg_followers_first_50", "max_followers_first_50", "verified_ratio", "rt_like_ratio",
 ]
 
 
@@ -85,10 +180,13 @@ class ViralityPredictorConfig:
 
 class ViralityFeatureExtractor:
     """
-    Extract features from a cluster's peek window.
+    Extract 42 enhanced features from cluster data for PSR prediction.
 
-    The peek window is the first N hours after anomaly detection,
-    used to gather early signals for virality prediction.
+    Features are computed from:
+    1. Tweet-level data (df) - burstiness, engagement distribution, user info
+    2. Timeseries history - window-level aggregates, growth dynamics
+
+    All features use only pre-detection data to avoid leakage.
     """
 
     def __init__(self, peek_hours: int = 6):
@@ -99,145 +197,295 @@ class ViralityFeatureExtractor:
         df: pl.DataFrame,
         z_score_at_detection: float = 0.0,
         detection_time: datetime | None = None,
+        timeseries_history: list[dict] | None = None,
     ) -> dict[str, float]:
         """
-        Extract features from cluster tweets in the peek window.
+        Extract 42 enhanced features for PSR prediction.
 
         Args:
-            df: DataFrame with tweets from the cluster
-                Expected columns: created_at, tweet, retweet_count, likes,
-                user_followers_count, user_verified (optional)
+            df: DataFrame with tweets from the cluster (pre-detection only)
+                Expected columns: created_at, tweet, retweet_count, likes/like_count,
+                user_followers_count, user_id, user_location_country (optional)
             z_score_at_detection: Z-score when anomaly was first detected
             detection_time: When the anomaly was detected
+            timeseries_history: List of ClusterTimeseriesRecord dicts for this cluster
+                Each dict has: timestamp, tweet_count, engagement, unique_users,
+                avg_followers, max_followers, z_score, z_score_count,
+                z_score_engagement, kleinberg_state, is_anomaly_trigger
 
         Returns:
-            Dictionary of feature name -> value
+            Dictionary of 42 feature names -> values
         """
         features: dict[str, float] = {}
 
-        if len(df) == 0:
-            # Return zeros for all features
+        # Handle empty input
+        if len(df) == 0 and (timeseries_history is None or len(timeseries_history) == 0):
             return {name: 0.0 for name in FEATURE_NAMES}
 
-        # Filter to peek window if detection_time provided
-        if detection_time is not None and "created_at" in df.columns:
-            peek_end = detection_time + timedelta(hours=self.peek_hours)
-            df = df.filter(
-                (pl.col("created_at") >= detection_time) & (pl.col("created_at") < peek_end)
-            )
+        # Normalize likes column name
+        if "likes" in df.columns and "like_count" not in df.columns:
+            df = df.with_columns(pl.col("likes").alias("like_count"))
 
-        if len(df) == 0:
-            return {name: 0.0 for name in FEATURE_NAMES}
+        # Sort timeseries by timestamp if provided
+        ts_records = []
+        if timeseries_history:
+            ts_records = sorted(timeseries_history, key=lambda x: x.get("timestamp", datetime.min))
 
-        # =========== BASIC FEATURES ===========
-        features["z_score_at_detection"] = z_score_at_detection
-        features["tweet_count"] = float(len(df))
-
-        # Engagement sum
-        rt_sum = df["retweet_count"].sum() if "retweet_count" in df.columns else 0
-        like_sum = df["likes"].sum() if "likes" in df.columns else 0
-        features["engagement_sum"] = float(rt_sum + like_sum)
-
-        # =========== VELOCITY FEATURES ===========
-        # Time span in hours
-        if "created_at" in df.columns and len(df) > 1:
-            time_span = (df["created_at"].max() - df["created_at"].min()).total_seconds() / 3600
-            time_span = max(0.1, time_span)  # Avoid division by zero
+        # =====================================================================
+        # BASIC AGGREGATES (5)
+        # =====================================================================
+        if ts_records:
+            features["cumulative_tweets"] = float(sum(r.get("tweet_count", 0) for r in ts_records))
+            features["cumulative_engagement"] = float(sum(r.get("engagement", 0) for r in ts_records))
+            features["windows_since_start"] = float(len(ts_records))
+            features["mean_tweets_per_window"] = features["cumulative_tweets"] / max(1, len(ts_records))
+            features["mean_engagement_per_window"] = features["cumulative_engagement"] / max(1, len(ts_records))
         else:
-            time_span = float(self.peek_hours)
+            features["cumulative_tweets"] = float(len(df))
+            rt_sum = df["retweet_count"].sum() if "retweet_count" in df.columns else 0
+            like_sum = df["like_count"].sum() if "like_count" in df.columns else 0
+            features["cumulative_engagement"] = float(rt_sum + like_sum)
+            features["windows_since_start"] = 1.0
+            features["mean_tweets_per_window"] = features["cumulative_tweets"]
+            features["mean_engagement_per_window"] = features["cumulative_engagement"]
 
-        features["tweets_per_hour"] = features["tweet_count"] / time_span
-        features["engagement_velocity"] = features["engagement_sum"] / time_span
+        # =====================================================================
+        # GROWTH DYNAMICS (4)
+        # =====================================================================
+        if ts_records and len(ts_records) >= 2:
+            eng = np.array([r.get("engagement", 0) for r in ts_records])
 
-        # Momentum: compare second half vs first half engagement
-        if len(df) >= 4 and "created_at" in df.columns:
-            mid_time = df["created_at"].min() + timedelta(hours=time_span / 2)
-            first_half = df.filter(pl.col("created_at") < mid_time)
-            second_half = df.filter(pl.col("created_at") >= mid_time)
+            # Growth rate: last / first
+            features["growth_rate"] = float(eng[-1] / max(1, eng[0]))
 
-            first_eng = (
-                first_half["retweet_count"].sum() + first_half["likes"].sum()
-                if len(first_half) > 0
-                else 0
-            )
-            second_eng = (
-                second_half["retweet_count"].sum() + second_half["likes"].sum()
-                if len(second_half) > 0
-                else 0
-            )
+            if len(eng) >= 3:
+                velocity = np.diff(eng)
+                features["acceleration"] = float(velocity[-1] - velocity[0]) if len(velocity) >= 2 else 0.0
+                features["engagement_velocity"] = float(np.mean(np.abs(velocity)))
 
-            # Momentum: ratio of second half to first half (>1 = accelerating)
-            features["momentum"] = float(second_eng / max(1, first_eng))
+                # Jerk: rate of change of acceleration
+                if len(velocity) >= 2:
+                    accel = np.diff(velocity)
+                    features["engagement_jerk"] = float(np.mean(np.abs(accel))) if len(accel) > 0 else 0.0
+                else:
+                    features["engagement_jerk"] = 0.0
+            else:
+                features["acceleration"] = 0.0
+                features["engagement_velocity"] = 0.0
+                features["engagement_jerk"] = 0.0
         else:
-            features["momentum"] = 1.0
+            features["growth_rate"] = 1.0
+            features["acceleration"] = 0.0
+            features["engagement_velocity"] = 0.0
+            features["engagement_jerk"] = 0.0
 
-        # =========== ENGAGEMENT COMPOSITION ===========
-        total_engagement = max(1.0, features["engagement_sum"])
+        # =====================================================================
+        # BURSTINESS (4)
+        # =====================================================================
+        if len(df) >= 3 and "created_at" in df.columns:
+            tweet_times = df["created_at"].to_list()
+            features["burstiness"] = compute_burstiness(tweet_times)
 
-        features["rt_ratio"] = float(rt_sum) / total_engagement
-        features["like_ratio"] = float(like_sum) / total_engagement
-        features["engagement_efficiency"] = total_engagement / max(1.0, features["tweet_count"])
-
-        # =========== CONTENT FEATURES ===========
-        if "tweet" in df.columns:
-            tweets = df["tweet"].to_list()
-
-            # URL density
-            url_count = sum(1 for t in tweets if "http" in str(t).lower())
-            features["url_density"] = url_count / max(1, len(tweets))
-
-            # Media density (check for media URLs)
-            media_count = sum(
-                1 for t in tweets if any(m in str(t).lower() for m in ["pic.twitter", "video", "photo", "media"])
-            )
-            features["media_density"] = media_count / max(1, len(tweets))
-
-            # Hashtag average
-            hashtag_count = sum(str(t).count("#") for t in tweets)
-            features["hashtag_avg"] = hashtag_count / max(1, len(tweets))
+            # Inter-arrival time stats
+            timestamps_sorted = sorted(tweet_times)
+            inter_arrivals = np.array([
+                (timestamps_sorted[i + 1] - timestamps_sorted[i]).total_seconds()
+                for i in range(len(timestamps_sorted) - 1)
+            ])
+            if len(inter_arrivals) > 0:
+                features["inter_arrival_mean"] = float(np.mean(inter_arrivals))
+                features["inter_arrival_std"] = float(np.std(inter_arrivals))
+                features["inter_arrival_cv"] = (
+                    float(np.std(inter_arrivals) / np.mean(inter_arrivals))
+                    if np.mean(inter_arrivals) > 0 else 0.0
+                )
+            else:
+                features["inter_arrival_mean"] = 0.0
+                features["inter_arrival_std"] = 0.0
+                features["inter_arrival_cv"] = 0.0
         else:
-            features["url_density"] = 0.0
-            features["media_density"] = 0.0
-            features["hashtag_avg"] = 0.0
+            features["burstiness"] = 0.0
+            features["inter_arrival_mean"] = 0.0
+            features["inter_arrival_std"] = 0.0
+            features["inter_arrival_cv"] = 0.0
 
-        # =========== TEMPORAL FEATURES ===========
+        # =====================================================================
+        # EARLY SIGNALS (4)
+        # =====================================================================
+        if ts_records and len(ts_records) >= 2:
+            eng = np.array([r.get("engagement", 0) for r in ts_records])
+
+            # Early velocity: first 25% of windows
+            n_early = max(1, len(eng) // 4)
+            early_eng = float(np.sum(eng[:n_early]))
+            total_eng = float(np.sum(eng))
+            features["early_velocity_ratio"] = early_eng / max(1, total_eng)
+
+            # Final window ratio
+            features["final_window_ratio"] = float(eng[-1]) / max(1, total_eng)
+
+            # Peak detection
+            peak_idx = int(np.argmax(eng))
+            features["is_post_peak"] = 1.0 if peak_idx < len(eng) - 1 else 0.0
+            features["peak_position_ratio"] = float(peak_idx) / max(1, len(eng) - 1)
+        else:
+            features["early_velocity_ratio"] = 1.0
+            features["final_window_ratio"] = 1.0
+            features["is_post_peak"] = 0.0
+            features["peak_position_ratio"] = 1.0
+
+        # =====================================================================
+        # USER AUTHORITY (3)
+        # =====================================================================
+        if ts_records:
+            features["max_followers_seen"] = float(max(r.get("max_followers", 0) for r in ts_records))
+            features["avg_followers_seen"] = float(np.mean([r.get("avg_followers", 0) for r in ts_records]))
+            features["total_unique_users"] = float(sum(r.get("unique_users", 0) for r in ts_records))
+        elif "user_followers_count" in df.columns:
+            followers = df["user_followers_count"].drop_nulls()
+            features["max_followers_seen"] = float(followers.max()) if len(followers) > 0 else 0.0
+            features["avg_followers_seen"] = float(followers.mean()) if len(followers) > 0 else 0.0
+            features["total_unique_users"] = float(df["user_id"].n_unique()) if "user_id" in df.columns else float(len(df))
+        else:
+            features["max_followers_seen"] = 0.0
+            features["avg_followers_seen"] = 0.0
+            features["total_unique_users"] = float(len(df))
+
+        # =====================================================================
+        # EFFICIENCY (2)
+        # =====================================================================
+        total_followers = features["avg_followers_seen"] * features["total_unique_users"]
+        features["engagement_per_follower"] = (
+            features["cumulative_engagement"] / max(1, total_followers)
+        )
+
+        # Amplification factor
+        if len(df) > 0 and "retweet_count" in df.columns:
+            total_retweets = float(df["retweet_count"].sum())
+            features["amplification_factor"] = total_retweets / max(1, features["total_unique_users"])
+        else:
+            features["amplification_factor"] = 0.0
+
+        # =====================================================================
+        # ANOMALY SIGNALS (5)
+        # =====================================================================
+        if ts_records:
+            last_record = ts_records[-1]
+            # Handle None values gracefully
+            features["z_score_at_detect"] = float(last_record.get("z_score") or z_score_at_detection or 0.0)
+            features["max_z_score_seen"] = float(max((r.get("z_score") or 0) for r in ts_records))
+            features["z_score_count_at_detect"] = float(last_record.get("z_score_count") or 0.0)
+            features["z_score_engagement_at_detect"] = float(last_record.get("z_score_engagement") or 0.0)
+            features["kleinberg_state_at_detect"] = float(last_record.get("kleinberg_state") or 0.0)
+        else:
+            features["z_score_at_detect"] = float(z_score_at_detection or 0.0)
+            features["max_z_score_seen"] = float(z_score_at_detection or 0.0)
+            features["z_score_count_at_detect"] = 0.0
+            features["z_score_engagement_at_detect"] = 0.0
+            features["kleinberg_state_at_detect"] = 0.0
+
+        # =====================================================================
+        # GEOGRAPHIC (2)
+        # =====================================================================
+        if len(df) > 0 and "user_location_country" in df.columns:
+            countries = df["user_location_country"].drop_nulls().to_list()
+            if len(countries) > 0:
+                country_counts = Counter(countries)
+                total = sum(country_counts.values())
+                probs = np.array(list(country_counts.values())) / total
+                features["geographic_entropy_predetect"] = float(-np.sum(probs * np.log(probs + 1e-10)))
+                features["unique_countries_predetect"] = float(len(country_counts))
+            else:
+                features["geographic_entropy_predetect"] = 0.0
+                features["unique_countries_predetect"] = 0.0
+        else:
+            features["geographic_entropy_predetect"] = 0.0
+            features["unique_countries_predetect"] = 0.0
+
+        # =====================================================================
+        # TEMPORAL PATTERNS (5)
+        # =====================================================================
         if detection_time:
-            features["hour_of_day"] = float(detection_time.hour)
+            det_hour = detection_time.hour
+            features["hour_of_day"] = float(det_hour)
             features["is_weekend"] = 1.0 if detection_time.weekday() >= 5 else 0.0
+            features["is_morning"] = 1.0 if 6 <= det_hour < 12 else 0.0
+            features["is_evening"] = 1.0 if 18 <= det_hour < 24 else 0.0
         else:
             features["hour_of_day"] = 12.0
             features["is_weekend"] = 0.0
+            features["is_morning"] = 0.0
+            features["is_evening"] = 0.0
 
-        # =========== USER AUTHORITY FEATURES ===========
-        # These are critical for virality prediction (from review synthesis)
-
-        if "user_followers_count" in df.columns:
-            # First 50 users (early adopters)
-            first_50 = df.head(50)
-            followers = first_50["user_followers_count"].drop_nulls()
-
-            if len(followers) > 0:
-                features["avg_followers_first_50"] = float(followers.mean())
-                features["max_followers_first_50"] = float(followers.max())
-            else:
-                features["avg_followers_first_50"] = 0.0
-                features["max_followers_first_50"] = 0.0
+        # Posting hour entropy
+        if len(df) > 0 and "created_at" in df.columns:
+            hours = [t.hour for t in df["created_at"].to_list()]
+            hour_counts = np.zeros(24)
+            for h in hours:
+                hour_counts[h] += 1
+            hour_probs = hour_counts / (hour_counts.sum() + 1e-10)
+            features["posting_hour_entropy"] = float(-np.sum(hour_probs * np.log(hour_probs + 1e-10)))
         else:
-            features["avg_followers_first_50"] = 0.0
-            features["max_followers_first_50"] = 0.0
+            features["posting_hour_entropy"] = 0.0
 
-        if "user_verified" in df.columns:
-            first_50 = df.head(50)
-            verified = first_50["user_verified"].drop_nulls()
-            if len(verified) > 0:
-                features["verified_ratio"] = float(verified.sum()) / len(verified)
+        # =====================================================================
+        # ENGAGEMENT DISTRIBUTION (5)
+        # =====================================================================
+        if len(df) > 0 and "like_count" in df.columns:
+            likes = df["like_count"].to_numpy()
+            retweets = df["retweet_count"].to_numpy() if "retweet_count" in df.columns else np.zeros_like(likes)
+
+            features["max_retweets_per_tweet"] = float(np.max(retweets)) if len(retweets) > 0 else 0.0
+            features["avg_likes_per_tweet"] = float(np.mean(likes)) if len(likes) > 0 else 0.0
+
+            total_rt = float(np.sum(retweets))
+            total_likes = float(np.sum(likes))
+            features["rt_like_ratio"] = total_rt / max(1, total_likes)
+
+            # Engagement skewness
+            engagement = likes + retweets
+            if np.std(engagement) > 0:
+                features["engagement_skewness"] = float(skew(engagement))
             else:
-                features["verified_ratio"] = 0.0
-        else:
-            features["verified_ratio"] = 0.0
+                features["engagement_skewness"] = 0.0
 
-        # RT/Like ratio (controversy signal)
-        features["rt_like_ratio"] = float(rt_sum) / max(1.0, float(like_sum))
+            # Engagement Gini
+            features["engagement_gini"] = compute_gini(engagement)
+        else:
+            features["max_retweets_per_tweet"] = 0.0
+            features["avg_likes_per_tweet"] = 0.0
+            features["rt_like_ratio"] = 0.0
+            features["engagement_skewness"] = 0.0
+            features["engagement_gini"] = 0.0
+
+        # =====================================================================
+        # USER CONCENTRATION (2)
+        # =====================================================================
+        if len(df) > 0 and "user_id" in df.columns:
+            user_tweet_counts = df.group_by("user_id").agg(
+                pl.count().alias("tweet_count")
+            )["tweet_count"].to_numpy()
+            features["user_gini"] = compute_gini(user_tweet_counts)
+            features["top_user_ratio"] = (
+                float(np.max(user_tweet_counts)) / max(1, float(np.sum(user_tweet_counts)))
+            )
+        else:
+            features["user_gini"] = 0.0
+            features["top_user_ratio"] = 0.0
+
+        # =====================================================================
+        # ACCOUNT AGE (1)
+        # =====================================================================
+        if len(df) > 0 and "user_created_at" in df.columns and "created_at" in df.columns:
+            user_ages = []
+            for row in df.select(["created_at", "user_created_at"]).iter_rows():
+                tweet_time, user_created = row
+                if user_created is not None:
+                    age_days = (tweet_time - user_created).days
+                    user_ages.append(age_days)
+            features["account_age_avg_days"] = float(np.mean(user_ages)) if user_ages else 0.0
+        else:
+            features["account_age_avg_days"] = 0.0
 
         return features
 
@@ -286,13 +534,15 @@ class ViralityPredictor:
         features: dict[str, float],
     ) -> tuple[bool, float]:
         """
-        Predict virality from features.
+        Predict virality (PSR) from features.
 
         Args:
             features: Feature dictionary from ViralityFeatureExtractor
 
         Returns:
-            Tuple of (is_viral: bool, confidence: float)
+            Tuple of (is_high_psr: bool, psr_prediction: float)
+            - is_high_psr: True if predicted PSR > 0.5 (high spread potential)
+            - psr_prediction: Predicted PSR value [0, 1]
         """
         if not self.config.enabled:
             return False, 0.5
@@ -301,17 +551,20 @@ class ViralityPredictor:
 
         if self.model is not None:
             try:
-                proba = self.model.predict_proba(X)[0, 1]
-                is_viral = proba > 0.5
-                return is_viral, float(proba)
+                # LightGBM Regressor returns PSR directly (not probabilities)
+                psr_pred = self.model.predict(X)[0]
+                # Clamp to valid PSR range [0, 1]
+                psr_pred = float(max(0.0, min(1.0, psr_pred)))
+                is_high_psr = psr_pred > 0.5
+                return is_high_psr, psr_pred
             except Exception as e:
                 logger.warning(f"Model prediction failed: {e}, using heuristics")
 
         # Fallback: simple heuristics if model not available
         # Use engagement velocity and user authority
         velocity = features.get("engagement_velocity", 0)
-        max_followers = features.get("max_followers_first_50", 0)
-        z_score = features.get("z_score_at_detection", 0)
+        max_followers = features.get("max_followers_seen", 0)
+        z_score = features.get("z_score_at_detect", 0)
 
         # Simple scoring heuristic
         score = 0.3  # Base probability
@@ -321,8 +574,6 @@ class ViralityPredictor:
             score += 0.2
         if z_score > 5:
             score += 0.15
-        if features.get("verified_ratio", 0) > 0.1:
-            score += 0.1
 
         score = min(0.95, max(0.05, score))  # Clamp to [0.05, 0.95]
         return score > 0.5, score
@@ -332,20 +583,24 @@ class ViralityPredictor:
         df: pl.DataFrame,
         z_score_at_detection: float,
         detection_time: datetime,
+        timeseries_history: list[dict] | None = None,
     ) -> ViralityPrediction:
         """
         Full prediction pipeline from DataFrame.
 
         Args:
-            df: DataFrame with cluster tweets
+            df: DataFrame with cluster tweets (pre-detection only)
             z_score_at_detection: Z-score when detected
             detection_time: When anomaly was detected
+            timeseries_history: List of ClusterTimeseriesRecord dicts for this cluster
 
         Returns:
             ViralityPrediction object
         """
-        # Extract features
-        features = self.feature_extractor.extract(df, z_score_at_detection, detection_time)
+        # Extract features (now 42 enhanced features)
+        features = self.feature_extractor.extract(
+            df, z_score_at_detection, detection_time, timeseries_history
+        )
 
         # Predict
         is_viral, confidence = self.predict(features)

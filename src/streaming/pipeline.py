@@ -135,7 +135,7 @@ def _compute_one_user_one_vote_sentiment(
         "tweets_per_user": tweets_per_user,
     }
 
-from src.pipeline.modules.claim_extractor import GroqAsyncAdapter, GroqAsyncAdapterConfig
+from src.streaming.llm_normalizer import LLMNormalizerAdapter, LLMNormalizerConfig
 from src.pipeline.modules.clusterer import Clusterer, ClustererConfig
 from src.pipeline.modules.embedder import Embedder, EmbedderConfig
 from src.streaming.anomaly_detector import (
@@ -192,7 +192,7 @@ class PipelineConfig:
     embedder: EmbedderConfig | None = None
     clusterer: ClustererConfig | None = None
     anomaly: EnsembleAnomalyDetectorConfig | None = None
-    groq: GroqAsyncAdapterConfig | None = None
+    normalization: LLMNormalizerConfig | None = None
     registry: ClaimRegistryConfig | None = None
     virality: ViralityPredictorConfig | None = None
     checkworthiness: dict | None = None  # CheckworthinessConfig as dict (optional)
@@ -231,8 +231,11 @@ class PipelineConfig:
             anomaly=EnsembleAnomalyDetectorConfig.from_dict(config.get("anomaly", {}))
             if "anomaly" in config
             else None,
-            groq=GroqAsyncAdapterConfig.from_dict(config.get("groq", {}))
-            if "groq" in config
+            # Support both "normalization" (new) and "groq" (legacy) config keys
+            normalization=LLMNormalizerConfig.from_dict(
+                config.get("normalization", config.get("groq", {}))
+            )
+            if "normalization" in config or "groq" in config
             else None,
             registry=ClaimRegistryConfig.from_dict(config.get("registry", {}))
             if "registry" in config
@@ -290,10 +293,10 @@ class ClaimPipeline:
             config.anomaly or EnsembleAnomalyDetectorConfig()
         )
 
-        self.groq_adapter = GroqAsyncAdapter(config.groq or GroqAsyncAdapterConfig())
+        self.normalizer = LLMNormalizerAdapter(config.normalization or LLMNormalizerConfig())
 
         self.claim_registry = ClaimRegistry(
-            self.groq_adapter,
+            self.normalizer,
             self.embedder,
             config.registry or ClaimRegistryConfig(),
         )
@@ -350,7 +353,7 @@ class ClaimPipeline:
         ensuring the LLM sees the most semantically representative content.
         """
         cluster_df = df.filter(pl.col("cluster_id") == cluster_id)
-        max_tweets = self.config.groq.max_tweets_per_cluster if self.config.groq else 5
+        max_tweets = self.config.normalization.max_tweets_per_cluster if self.config.normalization else 5
 
         # Sort by similarity to centroid (most representative first)
         sorted_df = cluster_df.sort("cluster_similarity", descending=True)
@@ -747,11 +750,20 @@ class ClaimPipeline:
                     # Get cluster dataframe for feature extraction
                     cluster_df = df.filter(pl.col("cluster_id") == anomaly.cluster_id)
 
-                    # Predict virality
+                    # Get timeseries history for this cluster (for enhanced 42-feature extraction)
+                    # Convert Pydantic records to dicts for feature extraction
+                    cluster_ts_history = [
+                        r.model_dump() if hasattr(r, "model_dump") else r
+                        for r in self._timeseries_records
+                        if (r.cluster_id if hasattr(r, "cluster_id") else r.get("cluster_id")) == anomaly.cluster_id
+                    ]
+
+                    # Predict virality with enhanced features
                     prediction = self.virality_predictor.predict_from_df(
                         cluster_df,
                         z_score_at_detection=anomaly.z_score,
                         detection_time=timestamp,
+                        timeseries_history=cluster_ts_history,
                     )
                     prediction.claim_id = claim_id
 
@@ -893,7 +905,7 @@ class ClaimPipeline:
             "clusterer": self.clusterer.get_stats(),
             "anomaly_detector": self.anomaly_detector.get_stats(),
             "claim_registry": self.claim_registry.get_stats(),
-            "groq_adapter": self.groq_adapter.get_stats(),
+            "normalizer": self.normalizer.get_stats(),
             "virality_predictor": self.virality_predictor.get_stats(),
             "checkworthiness": {
                 "enabled": self._checkworthiness_enabled,
@@ -1093,7 +1105,7 @@ class ClaimPipeline:
         if registry_dir.exists():
             pipeline.claim_registry = ClaimRegistry.load(
                 registry_dir,
-                pipeline.groq_adapter,
+                pipeline.normalizer,
                 pipeline.embedder,
                 pipeline.config.registry,
             )
